@@ -71,10 +71,12 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
 /// path is uniform across all modes.
 /// @param[in] poscar - description of the unit cell
 /// @param[in] grid - phonon spectrum on a regular q-point grid
+/// @param[in] syms - symmetry operations object
 /// @param[in] T - temperature in K
 /// @return the small thermal conductivity tensor [W / (m K nm)]
 Eigen::MatrixXd calc_kappa_sg(const alma::Crystal_structure& poscar,
                               const alma::Gamma_grid& grid,
+			      const alma::Symmetry_operations& syms,
                               double T);
 
 /// Obtain the thermal conductivity along a particular direction in the
