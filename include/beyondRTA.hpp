@@ -51,6 +51,7 @@ Eigen::MatrixXd calc_kappa(
     const Eigen::Ref<const Eigen::ArrayXXd>& w0,
     double T,
     bool iterative,
+    bool GPU_run,
     boost::mpi::communicator& world);
 } // namespace beyondRTA
 } // namespace alma

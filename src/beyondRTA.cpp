@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2022 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 #include <map>
 #include <Eigen/Dense>
 #include <Eigen/IterativeLinearSolvers>
+#include <gpu_solver.hpp>
 #include <utilities.hpp>
 #include <beyondRTA.hpp>
 
@@ -33,6 +34,7 @@ Eigen::MatrixXd calc_kappa(
     const Eigen::Ref<const Eigen::ArrayXXd>& w0,
     double T,
     bool iterative,
+    bool GPU_run,
     boost::mpi::communicator& comm) {
     typedef std::array<int, 3> idx_triplet;
     typedef std::array<int, 2> idx_pair;
@@ -162,10 +164,37 @@ Eigen::MatrixXd calc_kappa(
         }
     } // done scanning over all 3-phonon processes
 
+    // Collapse contributions along modes
+    if (comm.size() > 1) {
+        std::vector<decltype(Gamma2)> G2_chuncks;
+        std::vector<decltype(Gamma_plus)> Gp_chuncks, Gm_chuncks;
+
+        gather(comm,Gamma2,G2_chuncks,0);
+        gather(comm,Gamma_plus,Gp_chuncks,0);
+        gather(comm,Gamma_minus,Gm_chuncks,0);
+
+        Gamma2.clear();
+        Gamma_plus.clear();
+        Gamma_minus.clear();
+
+        if (comm.rank() == 0) {
+            for (auto & map :  G2_chuncks)
+                Gamma2.insert(map.begin().map.end());
+            for (auto & map :  Gp_chuncks)
+                Gamma_plus.insert(map.begin().map.end());
+            for (auto & map :  Gm_chuncks)
+                Gamma_minus.insert(map.begin().map.end());
+        }
+        else {
+            return Eigen::Matrix3d::Zero();
+        }
+    }
+
     // build system of equations "A*H = B"
 
-    Eigen::MatrixXd A(3 * Ntot, 3 * Ntot);
-    A.fill(0.0);
+    std::unordered_map<idx_pair, double> A_elements;
+    // The worst case 33% of ocupation
+    A_elements.reserve(std::ceil(0.34 * Ntot * Ntot));
 
     Eigen::VectorXd B(3 * Ntot);
 
@@ -216,7 +245,7 @@ Eigen::MatrixXd calc_kappa(
 
         for (int nRrow = 0; nRrow < 3; nRrow++) {
             for (int nRcol = 0; nRcol < 3; nRcol++) {
-                A(rowBase + nRrow * Ntot, colBase + nRcol * Ntot) +=
+                A_elements[{rowBase + nRrow * Ntot, colBase + nRcol * Ntot}] +=
                     R(nRrow, nRcol) * tau(rowBase) * Gamma;
             }
         }
@@ -252,7 +281,7 @@ Eigen::MatrixXd calc_kappa(
 
         for (int nRrow = 0; nRrow < 3; nRrow++) {
             for (int nRcol = 0; nRcol < 3; nRcol++) {
-                A(rowBase + nRrow * Ntot, colBase + nRcol * Ntot) -=
+                A_elements[{rowBase + nRrow * Ntot, colBase + nRcol * Ntot}] -=
                     R(nRrow, nRcol) * tau(rowBase) * Gamma;
             }
         }
@@ -299,7 +328,7 @@ Eigen::MatrixXd calc_kappa(
 
         for (int nRrow = 0; nRrow < 3; nRrow++) {
             for (int nRcol = 0; nRcol < 3; nRcol++) {
-                A(rowBase + nRrow * Ntot, colBase + nRcol * Ntot) -=
+                A_elements[{rowBase + nRrow * Ntot, colBase + nRcol * Ntot}] -=
                     0.5 * R(nRrow, nRcol) * tau(rowBase) * Gamma;
             }
         }
@@ -335,19 +364,10 @@ Eigen::MatrixXd calc_kappa(
 
         for (int nRrow = 0; nRrow < 3; nRrow++) {
             for (int nRcol = 0; nRcol < 3; nRcol++) {
-                A(rowBase + nRrow * Ntot, colBase + nRcol * Ntot) -=
+                A_elements[{rowBase + nRrow * Ntot, colBase + nRcol * Ntot}] -=
                     0.5 * R(nRrow, nRcol) * tau(rowBase) * Gamma;
             }
         }
-    }
-
-    // Share the contributions from 3-phonon processes among cores and
-    // add them together.
-    if (comm.size() > 1) {
-        Eigen::MatrixXd my_A(A);
-        A.fill(0.);
-        boost::mpi::all_reduce(
-            comm, my_A.data(), my_A.size(), A.data(), std::plus<double>());
     }
 
     // contributions from 2-phonon processes
@@ -388,7 +408,7 @@ Eigen::MatrixXd calc_kappa(
 
         for (int nRrow = 0; nRrow < 3; nRrow++) {
             for (int nRcol = 0; nRcol < 3; nRcol++) {
-                A(rowBase + nRrow * Ntot, colBase + nRcol * Ntot) -=
+                A_elements[{rowBase + nRrow * Ntot, colBase + nRcol * Ntot}] -=
                     R(nRrow, nRcol) * tau(rowBase) * Gamma;
             }
         }
@@ -396,21 +416,33 @@ Eigen::MatrixXd calc_kappa(
 
     // diagonal elements in the system
     for (int diag_idx = 0; diag_idx < 3 * Ntot; diag_idx++) {
-        A(diag_idx, diag_idx) += 1.0;
+        A_elements[{diag_idx, diag_idx}] += 1.0;
     }
 
-    // Normalise each row for better numerical stability
-
-    for (int nrow = 0; nrow < 3 * Ntot; nrow++) {
-        double scale = A.row(nrow).array().abs().maxCoeff();
-        A.row(nrow) /= scale;
-        B(nrow) /= scale;
+    // Get tripletList
+    std::vector<Eigen::Triplet<double>> tripletList;
+    for (auto& [key, val] : A_elements) {
+        auto idx1 = key[0];
+        auto idx2 = key[1];
+        tripletList.push_back(Eigen::Triplet<double>(idx1, idx2, val));
     }
+
+    // build system of equations "A*H = B"
+
+    Eigen::SparseMatrix<double,Eigen::RowMajor> A(Ntot, Ntot);
+
+    // Fill sparse matrix
+    A.setFromTriplets(tripletList.begin(), tripletList.end());
+
 
     // SOLVE SYSTEM
+    double rel_err;
+    if (iterative and !GPU_run) {
+        /// Scale for better stability
+        Eigen::IterScaling<Eigen::SparseMatrix<double,Eigen::RowMajor>> scal;
+        scal.computeRef(A);
 
-    if (iterative) {
-        Eigen::BiCGSTAB<Eigen::MatrixXd> solver;
+        Eigen::BiCGSTAB<decltype(A)> solver;
         solver.compute(A);
 
         // RTA solution to be used as initial guess
@@ -423,14 +455,35 @@ Eigen::MatrixXd calc_kappa(
         H_guess.segment(2 * Ntot, Ntot) =
             omega.array() * tau.array() * vg.col(2).array();
 
+        B = scal.LeftScaling().cwiseProduct(B);
+        H_guess = scal.RightScaling().cwiseInverse().cwiseProduct(H_guess);
+
         H = solver.solveWithGuess(B, H_guess);
-    }
 
+        rel_err = (A * H - B).norm() / B.norm();
+
+        H = scal.RightScaling().cwiseProduct(H);
+
+    }
+    if (iterative and GPU_run){
+        H.segment(0, Ntot) =
+            omega.array() * tau.array() * vg.col(0).array();
+        H.segment(Ntot, Ntot) =
+            omega.array() * tau.array() * vg.col(1).array();
+        H.segment(2 * Ntot, Ntot) =
+            omega.array() * tau.array() * vg.col(2).array();
+        rel_err = linear_iterative_solver_gpu(A,B,H);
+    }
     else {
+        Eigen::IterScaling<Eigen::SparseMatrix<double,Eigen::RowMajor>> scal;
+        scal.computeRef(A);
+        B = scal.LeftScaling().cwiseProduct(B);
+
         H = A.partialPivLu().solve(B);
+        rel_err = (A * H - B).norm() / B.norm();
+        H = scal.RightScaling().cwiseProduct(H);
     }
 
-    double rel_err = (A * H - B).norm() / B.norm();
 
     if (rel_err > 1e-3) {
         std::cout << "alma::beyondRTA::calc_kappa > WARNING:" << std::endl;

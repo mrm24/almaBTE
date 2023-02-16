@@ -89,6 +89,13 @@ set(BULK_HDF5_MAJOR_VERSION 0)
 set(BULK_HDF5_MINOR_VERSION 2)
 set(TEST_RESOURCE_DIR "${PROJECT_SOURCE_DIR}/test_resources")
 
+#Check if GPU build type otherwise define it as false
+if (CMAKE_BUILD_TYPE STREQUAL "GPU")
+    set(GPU_BUILD 1)
+else()
+    set(GPU_BUILD 0)
+endif ()
+
 
 # Tell the compiler where to find the headers.
 include_directories(BEFORE "${PROJECT_SOURCE_DIR}/external/eigen")
