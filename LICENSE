@@ -1,3 +1,4 @@
+
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
@@ -199,3 +200,23 @@
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+This product bundles spglib-1.9.4, which is available under a new BSD
+license [1]. For details, see the files contained in
+external/spglib-1.9.4.tar.gz .
+
+This product bundles base-n 81eb445, which is available under a MIT license
+[2]. For details, see external/base-n .
+
+This product bundles Eigen 3.3.3, which is available under an MPL2
+license [3]. For details, see external/eigen-eigen-67e894c6cd8f .
+
+This product bundles gmock 1.7.0, which is available under a new BSD
+license [1]. For details, see external/gmock-1.7.0 .
+
+This product bundles randutil, which is  available under an MIT license
+[2]. For details, see external/randutils.
+
+[1] https://opensource.org/licenses/BSD-3-Clause
+[2] https://opensource.org/licenses/MIT
+[3] https://www.mozilla.org/en-US/MPL/2.0/
