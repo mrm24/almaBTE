@@ -21,6 +21,7 @@
 namespace alma {
 Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
                            const alma::Gamma_grid& grid,
+			   const alma::Symmetry_operations& syms,
                            const Eigen::Ref<const Eigen::ArrayXXd>& w,
                            double T) {
     auto nequiv = grid.get_nequivalences();
@@ -52,7 +53,97 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
                 alma::bose_einstein_kernel(sp0.omega[im], T) * tau * outer;
         }
     }
-    return (1e21 * alma::constants::kB / poscar.V / grid.nqpoints) * nruter;
+
+    nruter = (1e21 * alma::constants::kB / poscar.V / grid.nqpoints) * nruter;
+
+    /// Symmetrise kappa tensor 
+
+    Eigen::Matrix3d nruter_accumulated;
+    nruter_accumulated.fill(0.0);
+
+    for (std::size_t nsymm = 0; nsymm < syms.get_nsym(); nsymm++) {
+        nruter_accumulated += syms.rotate_m<double>(nruter, nsymm, true);
+    }
+
+    nruter = nruter_accumulated / static_cast<double>(syms.get_nsym());
+
+    return nruter;
+}
+
+Eigen::ArrayXd calc_l2_RTAisotropic(const alma::Crystal_structure& poscar,
+                                    const alma::Gamma_grid& grid,
+                                    const Eigen::Ref<const Eigen::ArrayXXd>& w,
+                                    double T) {
+    auto Nbranches =
+        static_cast<std::size_t>(grid.get_spectrum_at_q(0).omega.size());
+
+    if ((static_cast<std::size_t>(w.rows()) != Nbranches) ||
+        (static_cast<std::size_t>(w.cols()) != grid.nqpoints))
+        throw alma::value_error("inconsistent dimensions");
+
+    Eigen::ArrayXd l2num(3), l2den(3);
+    l2num.setZero();
+    l2den.setZero();
+
+    // The Gamma point is ignored.
+    for (decltype(Nbranches) iq = 1; iq < grid.nqpoints; iq++) {
+        auto sp = grid.get_spectrum_at_q(iq);
+
+        auto Qimages = poscar.map_to_firstbz(grid.get_q(iq));
+
+        Eigen::ArrayXd moment(3);
+        moment(0) = Qimages.row(0).mean();
+        moment(1) = Qimages.row(1).mean();
+        moment(2) = Qimages.row(2).mean();
+
+        moment *= 1.0e+9 * alma::constants::hbar;
+
+        for (decltype(Nbranches) im = 0; im < Nbranches; im++) {
+            double tau = (w(im, iq) == 0.) ? 0. : (1. / w(im, iq));
+            tau *= 1.0e-12;
+
+            Eigen::ArrayXd vg = sp.vg.col(im);
+            vg *= 1.0e+3;
+
+            double dfBE_T = alma::bose_einstein_kernel(sp.omega[im], T) *
+                            alma::constants::kB /
+                            (alma::constants::hbar * 1.0e+12 * sp.omega[im]);
+
+            if (alma::almost_equal(sp.omega[im], 0.))
+                continue;
+            Eigen::ArrayXd g1 = -tau * tau * dfBE_T * vg * vg;
+
+            // std::cout << sp.omega[im] << '\t' << g1(0) << '\t' << g1(1) <<
+            // '\t' << alma::bose_einstein_kernel(sp.omega[im], T) <<
+            //             '\t' << alma::constants::kB /(alma::constants::hbar
+            //             * 1.0e+12 * sp.omega[im] ) <<
+            //             '\t' << vg(0) << '\t' << vg(1) << '\t' << moment(0)
+            //             << '\t' << moment(1) << std::endl;
+
+            /// we are not dividing g1 by kappa as
+            /// it is canceled out by kappa outside integral
+
+            l2num += moment * vg * g1;
+            l2den += moment * vg * dfBE_T;
+        }
+    }
+
+    Eigen::ArrayXd l2 = (-1. / 5.) * l2num / l2den;
+
+
+    /// Check if isotropy is valid (it will fail for 2d materials
+    /// even if they are isotropic)
+    bool isotropic = ((l2 - l2.matrix().mean()).abs() < 1.0e-6).all();
+
+
+    if (!isotropic) {
+        std::cout << "# WARNING: Material might be anisotropic\n  ";
+        std::cout << " or 2d. l**2 calculation might be wrong as\n";
+        std::cout << "  it assumes material to be isotropic\n";
+    }
+
+
+    return l2;
 }
 
 
