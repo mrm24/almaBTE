@@ -16,6 +16,7 @@ add_library(alma_framework STATIC structures.cpp
   analytic1d.cpp
   beyondRTA.cpp
   shengbte_iter.cpp
+  gpu_solver.cpp
 )
 
 # Define our executables.
@@ -23,59 +24,59 @@ add_library(alma_framework STATIC structures.cpp
 add_executable(VCAbuilder VCAbuilder.cpp)
 target_link_libraries(VCAbuilder alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(superlattice_builder superlattice_builder.cpp)
 target_link_libraries(superlattice_builder alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(phononinfo phononinfo.cpp)
 target_link_libraries(phononinfo alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(kappa_Tsweep kappa_Tsweep.cpp)
 target_link_libraries(kappa_Tsweep alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(kappa_crossplanefilms kappa_crossplanefilms.cpp)
 target_link_libraries(kappa_crossplanefilms alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(kappa_inplanefilms kappa_inplanefilms.cpp)
 target_link_libraries(kappa_inplanefilms alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(cumulativecurves cumulativecurves.cpp)
 target_link_libraries(cumulativecurves alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(transient_analytic1d transient_analytic1d.cpp)
 target_link_libraries(transient_analytic1d alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(steady_montecarlo1d steady_montecarlo1d.cpp)
 target_link_libraries(steady_montecarlo1d alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 add_executable(steady_montecarlo1d_powersource steady_montecarlo1d_powersource.cpp)
 target_link_libraries(steady_montecarlo1d_powersource alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 
 # shengbtepp is a separate target that will not be built by "make all"
 if(BUILD_SHENGBTEPP)
   add_executable(shengbtepp EXCLUDE_FROM_ALL read_shengcontrol.f90 shengbtepp.cpp)
   target_link_libraries(shengbtepp alma_framework
   ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-  libsymspg ${HDF5_LIBS} Threads::Threads)
+  libsymspg ${HDF5_LIBS} Threads::Threads ${GPU_LIBS})
 endif()
 
 # These custom commands provide the tests with the right path to some of the executables in ALMA

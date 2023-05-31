@@ -105,11 +105,11 @@ double linear_iterative_solver_gpu(Eigen::SparseMatrix<double,Eigen::RowMajor>& 
     magma_d_mtransfer( x_d, &x, Magma_DEV, Magma_CPU, queue );
     magma_queue_sync( queue );
 
-    rel_err = (A_*x_ - b_).norm()/b_.norm();
-
     ///Return to Eigen
     for (int i = 0; i<x_.rows(); i++)
         x_(i) = (x.val)[i];
+
+    rel_err = (A_*x_ - b_).norm()/b_.norm();
 
     x_ = scal.RightScaling().cwiseProduct(x_);
 

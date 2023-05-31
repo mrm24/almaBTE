@@ -2,6 +2,8 @@
 cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
 project(ALMA CXX C)
 
+option(ENABLE_GPU_USE "Enables the use of GPU(s) if available." OFF)
+
 # Assume C++11 for all C++ source,
 # and require compiler support.
 set(CMAKE_CXX_STANDARD 11)
@@ -89,14 +91,22 @@ set(BULK_HDF5_MAJOR_VERSION 0)
 set(BULK_HDF5_MINOR_VERSION 2)
 set(TEST_RESOURCE_DIR "${PROJECT_SOURCE_DIR}/test_resources")
 
-#Check if GPU build type otherwise define it as false
-if (CMAKE_BUILD_TYPE STREQUAL "GPU")
+#Check if GPU build type otherwise define it as false, it defines cuda and magma libs
+if (ENABLE_GPU_USE)
+    message(" - ENABLE_GPU_USE .................: ON - build for GPU usage")
     set(GPU_BUILD 1)
+    find_package(CUDA REQUIRED)
+    include_directories($ENV{MAGMADIR}/include)
+    link_directories($ENV{MAGMADIR}/lib)
+    include_directories(${CUDA_INCLUDE_DIR})
+    link_directories(${CUDA_LIBRARY_DIR})
+    set(GPU_LIBS "libmagma libmagma_sparse libcublas libcudart libcusparse libopenblas")
 else()
+    message(" - ENABLE_GPU_USE .................: OFF - not GPU usage")
     set(GPU_BUILD 0)
+    set(GPU_LIBS "")
 endif ()
-
-
+m
 # Tell the compiler where to find the headers.
 include_directories(BEFORE "${PROJECT_SOURCE_DIR}/external/eigen")
 include_directories("${PROJECT_SOURCE_DIR}/include")
