@@ -12,14 +12,12 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-#pragma once
-
 /// @file
 ///
 /// Definition of gpu_solver.hpp
 //  ADD HERE ANY future implementation
 
-
+#include <iostream>
 #include <gpu_solver.hpp>
 #include <cmakevars.hpp>
 /// Symmetry preserving scaling algorithm
@@ -36,7 +34,7 @@ double linear_iterative_solver_gpu(Eigen::SparseMatrix<double,Eigen::RowMajor>& 
                   Eigen::VectorXd& b_,
                   Eigen::VectorXd& x_){
 
-    double rel_err = 1.0e+25;
+    double rel_error = 1.0e+25;
 #if GPU_BUILD
 
     std::cout << "Starting the GPU solver" << std::endl;
@@ -52,6 +50,7 @@ double linear_iterative_solver_gpu(Eigen::SparseMatrix<double,Eigen::RowMajor>& 
 
 
     ///INIT MAGMA
+    // std::cout << "## Init MAGMA" << std::endl << std::flush;
     magma_init();
     magma_dopts dopts;
     magma_queue_t queue;
@@ -63,11 +62,13 @@ double linear_iterative_solver_gpu(Eigen::SparseMatrix<double,Eigen::RowMajor>& 
 
     // Here we make the interface between Eigen and MAGMA
     // Essentially we put sparse matrices in a way that MAGMA understands it
+    //std::cout << "## EIGEN : MAGMA interface" << std::endl << std::flush;
     magma_dcsrset( A_.rows(), A_.cols(), A_.outerIndexPtr(), A_.innerIndexPtr(), A_.valuePtr() ,&A, queue );
     magma_dvset( b_.rows(), b_.cols(), b_.data(), &b, queue );
     magma_dvset( x_.rows(), x_.cols(), x_.data(), &x, queue );
 
     // Copy the linear system to the device (i.e. GPU)
+    //std::cout << "## HOST -> DEVICE" << std::endl << std::flush;
     magma_d_vtransfer( b, &b_d, Magma_CPU, Magma_DEV, queue );
     magma_queue_sync( queue );
     magma_d_mtransfer( A, &A_d, Magma_CPU, Magma_DEV, queue );
@@ -75,16 +76,16 @@ double linear_iterative_solver_gpu(Eigen::SparseMatrix<double,Eigen::RowMajor>& 
     magma_d_mtransfer( x, &x_d, Magma_CPU, Magma_DEV, queue );
     magma_queue_sync( queue );
 
+    //std::cout << "## MAGMA :  SOLVER" << std::endl << std::flush;
     // Configure solver (TODO: provide user control of it)
     dopts.solver_par.solver = Magma_GMRES;
     dopts.solver_par.rtol = 1.0e-16;
     dopts.solver_par.atol = 1.0e-19;
-    dopts.solver_par.maxiter = 5000;
-    dopts.solver_par.restart = 70;
+    dopts.solver_par.maxiter = 1000;
+    dopts.solver_par.restart = 15;
 
     // Use JACOBI preconditioner (not the best but it is efficient from memory and computational point of view)
     dopts.precond_par.solver  = Magma_JACOBI;
-
     magma_dsolverinfo_init( &dopts.solver_par, &dopts.precond_par, queue );
     // solve the linear system
     magma_d_precondsetup(A,b, &dopts.solver_par, &dopts.precond_par, queue );
@@ -92,14 +93,14 @@ double linear_iterative_solver_gpu(Eigen::SparseMatrix<double,Eigen::RowMajor>& 
 
     // Sync CPU and GPU
     magma_queue_sync( queue );
-    std::cout << "###############GPU SOLVER INFO##################\n";
+    std::cout << "###############GPU SOLVER INFO##################\n" << std::flush;
     std::cout << "#Residuals of linear system:" << std::endl;
     std::cout << "  -Initial residual " <<     dopts.solver_par.init_res << std::endl;
     std::cout << "  -Final residual " <<       dopts.solver_par.final_res << std::endl;
     std::cout << "  -Iteratively residual "   << dopts.solver_par.iter_res << std::endl;
     std::cout << "  -info   "                 << dopts.solver_par.info  << std::endl;
     std::cout << "  -niter  "                 << dopts.solver_par.numiter  << std::endl;
-    std::cout << "################################################\n"; 
+    std::cout << "################################################\n" << std::flush; 
 
     // Copy the solution vector back to the host and pass it back to the application
     magma_d_mtransfer( x_d, &x, Magma_DEV, Magma_CPU, queue );
@@ -109,7 +110,7 @@ double linear_iterative_solver_gpu(Eigen::SparseMatrix<double,Eigen::RowMajor>& 
     for (int i = 0; i<x_.rows(); i++)
         x_(i) = (x.val)[i];
 
-    rel_err = (A_*x_ - b_).norm()/b_.norm();
+    rel_error = (A_*x_ - b_).norm()/b_.norm();
 
     x_ = scal.RightScaling().cwiseProduct(x_);
 

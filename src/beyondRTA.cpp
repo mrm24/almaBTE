@@ -17,11 +17,37 @@
 
 #include <iostream>
 #include <map>
+#include <unordered_map>
+#if BOOST_VERSION >= 106700
+#include <boost/container_hash/hash.hpp>
+#else
+#include <boost/functional/hash.hpp>
+#endif
+#include <boost/serialization/unordered_map.hpp>
+#include <boost/serialization/map.hpp>
+
 #include <Eigen/Dense>
 #include <Eigen/IterativeLinearSolvers>
+#include <unsupported/Eigen/src/IterativeSolvers/Scaling.h>
+
 #include <gpu_solver.hpp>
 #include <utilities.hpp>
 #include <beyondRTA.hpp>
+
+/// Hash for pairs and arrays
+namespace std {
+template <typename T, std::size_t S> struct hash<std::array<T, S>> {
+    std::size_t operator()(const array<T, S>& key) const {
+        hash<T> backend;
+        std::size_t nruter = 0;
+
+        for (auto& e : key)
+            boost::hash_combine(nruter, backend(e));
+        return nruter;
+    }
+};
+} // namespace std
+
 
 namespace alma {
 namespace beyondRTA {
@@ -179,11 +205,11 @@ Eigen::MatrixXd calc_kappa(
 
         if (comm.rank() == 0) {
             for (auto & map :  G2_chuncks)
-                Gamma2.insert(map.begin().map.end());
+                Gamma2.insert(map.begin(),map.end());
             for (auto & map :  Gp_chuncks)
-                Gamma_plus.insert(map.begin().map.end());
+                Gamma_plus.insert(map.begin(),map.end());
             for (auto & map :  Gm_chuncks)
-                Gamma_minus.insert(map.begin().map.end());
+                Gamma_minus.insert(map.begin(),map.end());
         }
         else {
             return Eigen::Matrix3d::Zero();
@@ -421,7 +447,9 @@ Eigen::MatrixXd calc_kappa(
 
     // Get tripletList
     std::vector<Eigen::Triplet<double>> tripletList;
-    for (auto& [key, val] : A_elements) {
+    for (auto& element : A_elements) {
+        auto &key = element.first;
+	auto &val = element.second;
         auto idx1 = key[0];
         auto idx2 = key[1];
         tripletList.push_back(Eigen::Triplet<double>(idx1, idx2, val));
@@ -429,7 +457,7 @@ Eigen::MatrixXd calc_kappa(
 
     // build system of equations "A*H = B"
 
-    Eigen::SparseMatrix<double,Eigen::RowMajor> A(Ntot, Ntot);
+    Eigen::SparseMatrix<double,Eigen::RowMajor> A(3 * Ntot, 3 * Ntot);
 
     // Fill sparse matrix
     A.setFromTriplets(tripletList.begin(), tripletList.end());
@@ -479,7 +507,7 @@ Eigen::MatrixXd calc_kappa(
         scal.computeRef(A);
         B = scal.LeftScaling().cwiseProduct(B);
 
-        H = A.partialPivLu().solve(B);
+        H = Eigen::MatrixXd(A).partialPivLu().solve(B);
         rel_err = (A * H - B).norm() / B.norm();
         H = scal.RightScaling().cwiseProduct(H);
     }

@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
         bool outputCapacity = false;
         bool superlattice = false;
         std::string superlattice_UID = "NULL";
+	bool gpu_run = false;
 
         std::cout << "*************************************" << std::endl;
         std::cout << "This is ALMA/kappa_Tsweep version " << ALMA_VERSION_MAJOR
@@ -157,6 +158,10 @@ int main(int argc, char** argv) {
             if (v.first == "outputHeatCapacity") {
                 outputCapacity = true;
             }
+
+	    if (v.first == "GPU") {
+	    	gpu_run = true;
+	    }
         } // end XML parsing
 
         // Ensure that provided information is within expected bounds
@@ -462,7 +467,7 @@ int main(int argc, char** argv) {
                                                         w,
                                                         T,
                                                         fullBTE_iterative,
-							false,
+							gpu_run,
                                                         world);
             }
 

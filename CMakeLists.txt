@@ -100,13 +100,16 @@ if (ENABLE_GPU_USE)
     link_directories($ENV{MAGMADIR}/lib)
     include_directories(${CUDA_INCLUDE_DIR})
     link_directories(${CUDA_LIBRARY_DIR})
-    set(GPU_LIBS "libmagma libmagma_sparse libcublas libcudart libcusparse libopenblas")
+    #find_package(MAGMA REQUIRED)
+    #include_directories(${MAGMA_INCLUDE_DIR})
+    #link_directories(${MAGMA_LIBRARY_DIR})
+    set(GPU_LIBS "-lmagma -lmagma_sparse -lcublas -lcudart -lcusparse -lopenblas")
 else()
     message(" - ENABLE_GPU_USE .................: OFF - not GPU usage")
     set(GPU_BUILD 0)
     set(GPU_LIBS "")
 endif ()
-m
+
 # Tell the compiler where to find the headers.
 include_directories(BEFORE "${PROJECT_SOURCE_DIR}/external/eigen")
 include_directories("${PROJECT_SOURCE_DIR}/include")
