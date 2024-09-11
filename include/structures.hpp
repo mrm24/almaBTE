@@ -172,12 +172,14 @@ public:
     /// in the first Brillouin zone, as columns of a matrix.
     inline Eigen::MatrixXd map_to_firstbz(
         const Eigen::Ref<const Eigen::Vector3d>& q) const {
-        constexpr int sbound = 1;
+        constexpr int sbound = 3;
         // Step 1: find a single image using a standard approach
         Eigen::Vector3d qbz{this->rlattvec.colPivHouseholderQr().solve(q)};
+        Eigen::Vector3d qbz_min;
         qbz -= qbz.array().round().matrix().eval();
         qbz = (this->rlattvec * qbz).eval();
         double n2 = qbz.squaredNorm();
+        qbz_min = qbz;
         for (int i = -sbound; i <= sbound; ++i) {
             for (int j = -sbound; j <= sbound; ++j) {
                 for (int k = -sbound; k <= sbound; ++k) {
@@ -187,16 +189,17 @@ public:
                     double n2p = qbzp.squaredNorm();
                     if (n2p < n2) {
                         n2 = n2p;
-                        qbz = qbzp;
+                        qbz_min = qbzp;
                     }
                 }
             }
         }
+        qbz = qbz_min;
         // Step 2: perform a search to find equivalent images.
         std::size_t found = 0;
         int ncols = boost::math::pow<3>(2 * sbound + 1);
         Eigen::MatrixXd nruter(3, ncols);
-        for (int i = 0; i <= sbound; ++i) {
+        for (int i = -sbound; i <= sbound; ++i) {
             for (int j = -sbound; j <= sbound; ++j) {
                 for (int k = -sbound; k <= sbound; ++k) {
                     Eigen::Vector3d qbzp{qbz + i * this->rlattvec.col(0) +

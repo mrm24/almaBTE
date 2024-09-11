@@ -52,6 +52,8 @@ int gridDensityA;
 int gridDensityB;
 // number of wavevector points along C-axis
 int gridDensityC;
+// Scalebroad
+double scalebroad = 0.1;
 // root directory
 std::string materials_repository = ".";
 // target directory
@@ -272,7 +274,7 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
     try {
         born = alma::load_BORN(born_path.string().c_str());
     }
-    catch (alma::value_error) {
+    catch (const alma::value_error&) {
         polar = false;
     }
 
@@ -314,25 +316,27 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
     std::unique_ptr<alma::Gamma_grid> grid;
 
     if (polar) {
-        grid = alma::make_unique<alma::Gamma_grid>(*poscar,
-                                                   syms,
-                                                   *ifcs,
-                                                   *born,
-                                                   gridDensityA,
-                                                   gridDensityB,
-                                                   gridDensityC);
+        grid = std::make_unique<alma::Gamma_grid>(*poscar,
+                                                  syms,
+                                                  *ifcs,
+                                                  *born,
+                                                  gridDensityA,
+                                                  gridDensityB,
+                                                  gridDensityC);
     }
 
     else {
-        grid = alma::make_unique<alma::Gamma_grid>(
+        grid = std::make_unique<alma::Gamma_grid>(
             *poscar, syms, *ifcs, gridDensityA, gridDensityB, gridDensityC);
     }
 
     grid->enforce_asr();
 
     std::cout << "Finding 3-phonon processes" << std::endl;
+    std::cout << "Using scalebroad = " << scalebroad << std::endl;
     // find allowed phonon processes
-    auto threeph_processes = alma::find_allowed_threeph(*grid, world, 0.1);
+    auto threeph_processes =
+        alma::find_allowed_threeph(*grid, world, scalebroad);
     std::cout << "Computing matrix elements" << std::endl;
 
     std::size_t targetpercentage = 1;
@@ -515,7 +519,7 @@ int alloyBuilder() {
         try {
             born = alma::load_BORN(born_path.string().c_str());
         }
-        catch (alma::value_error) {
+        catch (const alma::value_error&) {
             polar = false;
         }
 
@@ -768,30 +772,32 @@ int alloyBuilder() {
     std::unique_ptr<alma::Gamma_grid> grid;
 
     if (polar) {
-        grid = alma::make_unique<alma::Gamma_grid>(*vc_poscar,
-                                                   syms,
-                                                   *vc_ifcs,
-                                                   *vc_born,
-                                                   gridDensityA,
-                                                   gridDensityB,
-                                                   gridDensityC);
+        grid = std::make_unique<alma::Gamma_grid>(*vc_poscar,
+                                                  syms,
+                                                  *vc_ifcs,
+                                                  *vc_born,
+                                                  gridDensityA,
+                                                  gridDensityB,
+                                                  gridDensityC);
     }
 
     else {
-        grid = alma::make_unique<alma::Gamma_grid>(*vc_poscar,
-                                                   syms,
-                                                   *vc_ifcs,
-                                                   gridDensityA,
-                                                   gridDensityB,
-                                                   gridDensityC);
+        grid = std::make_unique<alma::Gamma_grid>(*vc_poscar,
+                                                  syms,
+                                                  *vc_ifcs,
+                                                  gridDensityA,
+                                                  gridDensityB,
+                                                  gridDensityC);
     }
 
     grid->enforce_asr();
 
     std::cout << "Finding 3-phonon processes" << std::endl;
+    std::cout << "Using scalebroad = " << scalebroad << std::endl;
 
     // find allowed phonon processes
-    auto threeph_processes = alma::find_allowed_threeph(*grid, world, 0.1);
+    auto threeph_processes =
+        alma::find_allowed_threeph(*grid, world, scalebroad);
 
     std::cout << "Computing matrix elements" << std::endl;
 
@@ -876,21 +882,21 @@ int main(int argc, char** argv) {
         tree.get_child("singlecrystal");
         materialType = materialTypes::singlecrystal;
     }
-    catch (boost::property_tree::ptree_bad_path) {
+    catch (const boost::property_tree::ptree_bad_path&) {
     }
 
     try {
         tree.get_child("alloy");
         materialType = materialTypes::alloy;
     }
-    catch (boost::property_tree::ptree_bad_path) {
+    catch (const boost::property_tree::ptree_bad_path&) {
     }
 
     try {
         tree.get_child("parametricalloy");
         materialType = materialTypes::parametricalloy;
     }
-    catch (boost::property_tree::ptree_bad_path) {
+    catch (const boost::property_tree::ptree_bad_path&) {
     }
 
     // Define some error-catching variables
@@ -930,6 +936,10 @@ int main(int argc, char** argv) {
             if (v.first == "overwrite") {
                 overwrite = true;
             }
+
+            if (v.first == "broadening") {
+                scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
+            }
         }
     } // end singlecrystal
 
@@ -944,12 +954,6 @@ int main(int argc, char** argv) {
                 gridDensityA = alma::parseXMLfield<int>(v, "A");
                 gridDensityB = alma::parseXMLfield<int>(v, "B");
                 gridDensityC = alma::parseXMLfield<int>(v, "C");
-
-                if (override_gridDensity) {
-                    gridDensityA = external_gridDensity;
-                    gridDensityB = external_gridDensity;
-                    gridDensityC = external_gridDensity;
-                }
             }
 
             if (v.first == "compound") {
@@ -968,6 +972,10 @@ int main(int argc, char** argv) {
 
             if (v.first == "overwrite") {
                 overwrite = true;
+            }
+
+            if (v.first == "broadening") {
+                scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
             }
         }
     } // end alloy
@@ -1007,12 +1015,6 @@ int main(int argc, char** argv) {
                 gridDensityA = alma::parseXMLfield<int>(v, "A");
                 gridDensityB = alma::parseXMLfield<int>(v, "B");
                 gridDensityC = alma::parseXMLfield<int>(v, "C");
-
-                if (override_gridDensity) {
-                    gridDensityA = external_gridDensity;
-                    gridDensityB = external_gridDensity;
-                    gridDensityC = external_gridDensity;
-                }
             }
 
             if (v.first == "compound") {
@@ -1035,6 +1037,10 @@ int main(int argc, char** argv) {
 
             if (v.first == "overwrite") {
                 overwrite = true;
+            }
+
+            if (v.first == "broadening") {
+                scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
             }
         }
     } // end parametricalloy
