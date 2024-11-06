@@ -94,7 +94,7 @@ std::unique_ptr<Crystal_structure> load_POSCAR(const char* filename) {
                 positions(j, i) += 1.;
         }
     // Build and return the object.
-    return make_unique<Crystal_structure>(
+    return alma::make_unique<Crystal_structure>(
         lattvec, positions, elements, numbers);
 }
 
@@ -172,7 +172,7 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
     std::vector<Triple_int> pos;
     std::vector<Eigen::MatrixXd> ifcs;
     std::tie(pos, ifcs) = split_keys_and_values(matrices);
-    return make_unique<Harmonic_ifcs>(pos, ifcs, na, nb, nc);
+    return alma::make_unique<Harmonic_ifcs>(pos, ifcs, na, nb, nc);
 }
 
 
@@ -249,7 +249,7 @@ std::unique_ptr<Dielectric_parameters> load_BORN(const char* filename) {
             throw input_error("wrong number of fields in a line");
         }
     } while (!f.eof());
-    return make_unique<Dielectric_parameters>(born, epsilon);
+    return alma::make_unique<Dielectric_parameters>(born, epsilon);
 }
 
 

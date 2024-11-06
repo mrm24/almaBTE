@@ -16,6 +16,7 @@ add_library(alma_framework STATIC structures.cpp
   analytic1d.cpp
   beyondRTA.cpp
   shengbte_iter.cpp
+  interfaces.cpp
 )
 
 # Define our executables.
@@ -67,6 +68,11 @@ libsymspg ${HDF5_LIBS} Threads::Threads)
 
 add_executable(steady_montecarlo1d_powersource steady_montecarlo1d_powersource.cpp)
 target_link_libraries(steady_montecarlo1d_powersource alma_framework
+${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
+libsymspg ${HDF5_LIBS} Threads::Threads)
+
+add_executable(interfaces interface_conductance.cpp)
+target_link_libraries(interfaces alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
 libsymspg ${HDF5_LIBS} Threads::Threads)
 

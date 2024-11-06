@@ -54,6 +54,11 @@ private:
         ar << rows;
         ar << cols;
         ar << boost::serialization::make_array(this->vg.data(), rows * cols);
+        rows = this->wigner_v.rows();
+        cols = this->wigner_v.cols();
+        ar << rows;
+        ar << cols;
+        ar << boost::serialization::make_array(this->wigner_v.data(), rows * cols);
     }
 
 
@@ -78,6 +83,10 @@ private:
         ar >> cols;
         this->vg.resize(rows, cols);
         ar >> boost::serialization::make_array(this->vg.data(), rows * cols);
+        ar >> rows;
+        ar >> cols;
+        this->wigner_v.resize(rows, cols);
+        ar >> boost::serialization::make_array(this->wigner_v.data(), rows * cols);
     }
 
 
@@ -93,11 +102,14 @@ public:
     Eigen::MatrixXcd wfs;
     /// Cartesian components of the group velocities in km / s.
     Eigen::ArrayXXd vg;
+    /// Cartesian components of the more general Wigner velocity matrix in km / s
+    Eigen::ArrayXXcd wigner_v;
     /// Basic constructor.
     Spectrum_at_point(const Eigen::Ref<const Eigen::ArrayXd>& _omega,
                       const Eigen::Ref<const Eigen::MatrixXcd>& _wfs,
-                      const Eigen::Ref<const Eigen::ArrayXXd>& _vg)
-        : omega(_omega), wfs(_wfs), vg(_vg) {
+                      const Eigen::Ref<const Eigen::ArrayXXd>& _vg,
+                      const Eigen::Ref<const Eigen::ArrayXXcd>& _wigner_v)
+        : omega(_omega), wfs(_wfs), vg(_vg), wigner_v(_wigner_v) {
     }
 
 

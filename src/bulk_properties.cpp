@@ -17,6 +17,7 @@
 
 #include <bulk_properties.hpp>
 #include <analytic1d.hpp>
+#include <boost/math/special_functions/pow.hpp>
 
 namespace alma {
 Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
@@ -69,6 +70,81 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
 
     return nruter;
 }
+
+Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
+                                     const alma::Gamma_grid& grid,
+                                     const alma::Symmetry_operations& syms,
+                                     const Eigen::Ref<const Eigen::ArrayXXd>& w,
+                                     double T) {
+    auto nequiv = grid.get_nequivalences();
+    auto nmodes =
+        static_cast<std::size_t>(grid.get_spectrum_at_q(0).omega.size());
+
+    if ((static_cast<std::size_t>(w.rows()) != nmodes) ||
+        (static_cast<std::size_t>(w.cols()) != grid.nqpoints))
+        throw alma::value_error("inconsistent dimensions");
+    Eigen::MatrixXcd nruter(3, 3);
+    nruter.fill(std::complex<double>(0.,0.));
+
+    for (decltype(nequiv) iequiv = 0; iequiv < nequiv; ++iequiv) {
+        
+        auto iq0 = grid.get_representative(iequiv);
+        auto sp0 = grid.get_spectrum_at_q(iq0);
+
+        // Modes coupling with 0 frequency are ignored (i.e. acoustic modes at Gamma).
+        for (decltype(nmodes) im = 0; im < nmodes; ++im) {
+
+            if (alma::almost_equal(sp0.omega(im),0.)) continue;
+            double Gamma = w(im, iq0);
+            
+            for (decltype(nmodes) imp = 0; imp < nmodes; ++im) {
+
+                if (alma::almost_equal(sp0.omega(imp),0.) || im == imp) continue;
+                double Gammap = w(imp, iq0);
+
+                // The complex elements of the matrix should vanish in the total summation
+                // I keep them until the end for a last sanity check
+                Eigen::Matrix3cd wigner_vvp = (
+                    sp0.wigner_v.col(im+nmodes*imp).matrix() * 
+                    sp0.wigner_v.col(imp+nmodes*im).matrix().transpose());
+
+                auto Gamma_factor  = 0.5 * (Gamma + Gammap) / (
+                    boost::math::pow<2>(sp0.omega(imp) - sp0.omega(im)) +
+                    0.25 * boost::math::pow<2>(  Gamma + Gammap ));
+
+                auto Cfactor = alma::bose_einstein_kernel(sp0.omega[im], T) / sp0.omega[im] +
+                               alma::bose_einstein_kernel(sp0.omega[imp], T) / sp0.omega[imp];
+
+                nruter += 0.25 * (sp0.omega(imp) + sp0.omega(im)) * Cfactor *
+                        Gamma_factor * wigner_vvp;
+
+            }
+        }
+    }
+
+    nruter = (1e21 * alma::constants::kB / poscar.V / grid.nqpoints) * nruter;
+
+    /// Symmetrise the complex kappa tensor
+
+    Eigen::Matrix3cd nruter_accumulated;
+    nruter_accumulated.fill(0.0);
+
+    for (std::size_t nsymm = 0; nsymm < syms.get_nsym(); nsymm++) {
+        nruter_accumulated += syms.rotate_m<std::complex<double>>(nruter, nsymm, true);
+    }
+
+    nruter = nruter_accumulated / static_cast<double>(syms.get_nsym());
+
+    /// Check that the imaginary part is small
+    if (!alma::almost_equal(nruter.imag().maxCoeff(),0.)){
+        std::cerr << nruter << std::endl;
+        throw alma::value_error("Imaginary terms of the coherence contribution are not null.");
+    }
+
+    // Return the real part
+    return nruter.real();
+}
+
 
 Eigen::MatrixXd calc_kappa_sg(const alma::Crystal_structure& poscar,
                               const alma::Gamma_grid& grid,

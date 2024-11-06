@@ -346,6 +346,7 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     auto omega2 = solver.eigenvalues();
     auto wfs = solver.eigenvectors();
     Eigen::MatrixXd vg(Eigen::MatrixXd::Zero(3, ndof));
+    Eigen::MatrixXcd wigner_v(Eigen::MatrixXcd::Zero(3, ndof*ndof));
     Eigen::ArrayXd omega(ndof);
 
     for (auto i = 0; i < omega.size(); ++i) {
@@ -398,6 +399,20 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
         }
     }
 
-    return make_unique<Spectrum_at_point>(omega, wfs, vg);
+    // With the unique set of eigenvectors compute the Wigner generalization
+    // to the velocities
+    for (auto i = 0; i < ndof; ++i) {
+        for (auto j = 0; j < ndof; ++j) {
+            for (auto k = 0; k < 3; ++k) {
+                wigner_v(k,i*ndof+j) = wfs.col(i).dot(matrices[k + 1] * wfs.col(j));
+            } 
+
+            // See Eq. 34 in 10.1103/PhysRevB.106.024312
+            wigner_v.col(i*ndof+j) /= omega(i) + omega(j); 
+
+        } 
+    }
+
+    return alma::make_unique<Spectrum_at_point>(omega, wfs, vg, wigner_v);
 }
 } // namespace alma

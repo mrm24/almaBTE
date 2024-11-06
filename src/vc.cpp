@@ -81,7 +81,7 @@ std::unique_ptr<Crystal_structure> vc_mix_structures(
         else
             ++numbers.back();
     }
-    return make_unique<Crystal_structure>(lattvec, positions, vnames, numbers);
+    return alma::make_unique<Crystal_structure>(lattvec, positions, vnames, numbers);
 }
 
 
@@ -122,7 +122,7 @@ std::unique_ptr<Dielectric_parameters> vc_mix_dielectric_parameters(
 
     for (auto& b : born)
         b /= total;
-    return make_unique<Dielectric_parameters>(born, epsilon);
+    return alma::make_unique<Dielectric_parameters>(born, epsilon);
 }
 
 
@@ -171,7 +171,7 @@ std::unique_ptr<Harmonic_ifcs> vc_mix_harmonic_ifcs(
 
     for (auto& b : blocks)
         b /= total;
-    return make_unique<Harmonic_ifcs>(pos, blocks, na, nb, nc);
+    return alma::make_unique<Harmonic_ifcs>(pos, blocks, na, nb, nc);
 }
 
 
@@ -197,7 +197,7 @@ std::unique_ptr<std::vector<Thirdorder_ifcs>> vc_mix_thirdorder_ifcs(
             throw value_error("all components must contain the same number"
                               " of IFC blocks");
     // Create the final object.
-    auto nruter = make_unique<std::vector<Thirdorder_ifcs>>();
+    auto nruter = alma::make_unique<std::vector<Thirdorder_ifcs>>();
     // We average the Cartesian coordinates of the unit cells and
     // the IFCs. We require the atom indices to be common to all
     // inputs.
