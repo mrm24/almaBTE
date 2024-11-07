@@ -398,8 +398,7 @@ int main(int argc, char** argv) {
             std::cout << "   -Model: " << interface_model << std::endl;
         }
 
-        Eigen::ArrayXd alpha(grid_A->nqpoints *
-            grid_A->get_spectrum_at_q(0).omega.size() - 3);
+        Eigen::ArrayXXd alpha(grid_A->get_spectrum_at_q(0).omega.size(),grid_A->nqpoints);
         alpha.setZero();
 
         if (interface_model=="constant") {
@@ -418,12 +417,11 @@ int main(int argc, char** argv) {
                 for (std::size_t iq = 0; iq < grid_A->nqpoints; iq++) {
                     auto sp = grid_A->get_spectrum_at_q(iq);
                     for (decltype(nbands_) ib = 0; ib < nbands_; ib++) {
-                        std::size_t imode = iq * nbands_ + ib;
                         /// Remove acoustic modes at Gamma and ignore non-incident modes
                         double vproj = uvector_A.dot(sp.vg.col(ib).matrix());
-                        if (imode < 3 or vproj < 0. or alma::almost_equal(vproj,0.))
+                        if (alma::almost_equal(sp.omega(ib),0.) or vproj < 0. or alma::almost_equal(vproj,0.))
                             continue;
-                        alpha(imode - 3) = myinterface.get_transmission(iq,ib);
+                        alpha(ib,iq) = myinterface.get_transmission(iq,ib);
                     }
                 }
 
@@ -474,11 +472,11 @@ int main(int argc, char** argv) {
             for (std::size_t iq = 0; iq < grid_A->nqpoints; iq++) {
                 auto sp = grid_A->get_spectrum_at_q(iq);
                 for (decltype(nbands_) ib = 0; ib < nbands_; ib++) {
-                    std::size_t imode = iq * nbands_ + ib;
-                    /// Remove acoustic modes at Gamma and ignore non-incident modes
-                    if (imode < 3 )
+                    // Remove acoustic modes at Gamma and ignore non-incident modes
+                    double vproj = uvector_A.dot(sp.vg.col(ib).matrix());
+                    if (alma::almost_equal(sp.omega(ib),0.) or vproj < 0. or alma::almost_equal(vproj,0.))
                         continue;
-                    alpha(imode - 3) = myinterface.get_transmission(iq,ib);
+                    alpha(ib,iq) = myinterface.get_transmission(iq,ib);
                 }
             }
         }
@@ -497,7 +495,6 @@ int main(int argc, char** argv) {
                 iarchive >> i_B_name;
                 iarchive >> i_B_axis;
                 iarchive >> alpha;
-
 
                 /// Make some check:
                 if (h5_repository_A != i_A_name) {
@@ -540,8 +537,14 @@ int main(int argc, char** argv) {
         if (world.rank() == 0) {
             std::cout << "   [DONE]" << std::endl;
             std::cout << "*Computing the conductance:";
-        }
+	}
 
+	double G = interface_conductance(*poscar_A,*grid_A,uvector_A,alpha,Temperature,world);
+
+	if (world.rank() == 0) {
+ 	    std::cout << "G : " << alma::engineer_format(G) << "W/(m·K)" << std::endl;
+	    std::cout << "   [DONE]" << std::endl;
+	}
 
         return EXIT_SUCCESS;
     }

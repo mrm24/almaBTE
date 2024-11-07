@@ -19,6 +19,8 @@ add_library(alma_framework STATIC structures.cpp
   interfaces.cpp
 )
 
+add_dependencies(alma_framework libsymspg)
+
 # Define our executables.
 
 add_executable(VCAbuilder VCAbuilder.cpp)

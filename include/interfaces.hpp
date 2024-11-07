@@ -31,7 +31,21 @@
 
 namespace alma {
 
-    
+
+/// Computes the conductance of an interface
+/// @param[in] poscar - the cell informaton of the material in the A side
+/// @param[in] grid   - the phonon information of the material in the A side
+/// @param[in] axis   - the transport axis along the material in the A side
+/// @param[in] alpha  - the transmission coefficients from A to B. Shape: (qpts,nbands) 
+/// @param[in] Tref   - the reference temperature of the interface (i.e. the equilibrium one)
+/// @param[in] world  - the mpi communicator
+double  interface_conductance(const Crystal_structure& poscar,
+                              const Gamma_grid& grid,
+                              const Eigen::Ref<const Eigen::Vector3d> axis,
+                              const Eigen::Ref<const Eigen::ArrayXd> alpha,
+			      const double Tref,
+			      boost::mpi::communicator& world);
+
 /// Base class to model interface transmission
 /// coefficients from A to B
 class interface {

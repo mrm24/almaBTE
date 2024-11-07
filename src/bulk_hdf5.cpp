@@ -560,6 +560,10 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         for (hsize_t i = 0; i < nelements; ++i) {
             elements_dspace.selectElements(H5S_SELECT_SET, 1, &i);
             elements_dset.read(value, elements_type, scalar, elements_dspace);
+	    value.erase(std::remove_if(value.begin(), value.end(), [](char c) {
+                       return  (c == '\t') or (c == '\n') or (c == '\r') or
+		               (c == '\0') or (c < 32 || c > 126);
+                     }), value.end());
             elements.push_back(value);
         }
     }
