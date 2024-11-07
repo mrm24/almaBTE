@@ -25,7 +25,7 @@ namespace alma {
 double  interface_conductance(const Crystal_structure& poscar,
                               const Gamma_grid& grid,
                               const Eigen::Ref<const Eigen::Vector3d> axis,
-                              const Eigen::Ref<const Eigen::ArrayXd> alpha,
+                              const Eigen::Ref<const Eigen::ArrayXXd> alpha,
                               const double Tref,
 			      boost::mpi::communicator& world) {
       auto nq = grid.nqpoints;
@@ -42,7 +42,7 @@ double  interface_conductance(const Crystal_structure& poscar,
       auto qjobs = my_jobs(nq, world.size(),world.rank());
 
       for (decltype(nq) iq = qjobs[0]; iq < qjobs[1]; iq++){
-          auto sp = grid.get_spectrum_at_q(0);
+          auto sp = grid.get_spectrum_at_q(iq);
 	  for (decltype(nbands) ib = 0; ib < nbands; ib++){
 	      double omega = sp.omega(ib); 
 	      double vproj = axis.dot(sp.vg.col(ib).matrix());
@@ -58,7 +58,7 @@ double  interface_conductance(const Crystal_structure& poscar,
 
       boost::mpi::all_reduce(world, conductance_proc, conductance, std::plus<double>());
 
-      return conductance / (1e21 * alma::constants::kB / poscar.V / grid.nqpoints);
+      return conductance * 1e+30 * alma::constants::kB / grid.nqpoints / poscar.V;
 };
 
 interface::interface(Crystal_structure& poscar_A,

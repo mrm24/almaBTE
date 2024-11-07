@@ -42,7 +42,7 @@ namespace alma {
 double  interface_conductance(const Crystal_structure& poscar,
                               const Gamma_grid& grid,
                               const Eigen::Ref<const Eigen::Vector3d> axis,
-                              const Eigen::Ref<const Eigen::ArrayXd> alpha,
+                              const Eigen::Ref<const Eigen::ArrayXXd> alpha,
 			      const double Tref,
 			      boost::mpi::communicator& world);
 

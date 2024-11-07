@@ -1,5 +1,5 @@
 # Standard boilerplate.
-cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.6.0 FATAL_ERROR)
 project(ALMA CXX C)
 
 # Assume C++17 for all C++ source,
@@ -132,11 +132,12 @@ ExternalProject_Add(
   spglib
   URL file://${PROJECT_SOURCE_DIR}/external/spglib-1.9.4.tar.gz
   PREFIX external/spglib
-  CONFIGURE_COMMAND <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND1} --disable-shared --with-pic --enable-static --prefix=<INSTALL_DIR> || <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND2}  ${SPGLIB_CONFIGURE_OPTIONS} --disable-shared --enable-static --prefix=<INSTALL_DIR>
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE  
+  CONFIGURE_COMMAND <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND1} --disable-shared --with-pic --enable-static --prefix=<INSTALL_DIR> || <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND2} ${SPGLIB_CONFIGURE_OPTIONS} --disable-shared --enable-static --prefix=<INSTALL_DIR>
   BUILD_COMMAND make
   INSTALL_COMMAND make install
   BUILD_IN_SOURCE 1
-  )
+)
 # Make sure that the spglib headers and libraries are available.
 ExternalProject_Get_Property(spglib install_dir)
 include_directories(${install_dir}/include)

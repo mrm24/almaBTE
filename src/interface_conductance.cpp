@@ -536,13 +536,13 @@ int main(int argc, char** argv) {
 
         if (world.rank() == 0) {
             std::cout << "   [DONE]" << std::endl;
-            std::cout << "*Computing the conductance:";
+            std::cout << "*Computing the conductance:\n";
 	}
 
 	double G = interface_conductance(*poscar_A,*grid_A,uvector_A,alpha,Temperature,world);
 
 	if (world.rank() == 0) {
- 	    std::cout << "G : " << alma::engineer_format(G) << "W/(m·K)" << std::endl;
+ 	    std::cout << "G : " << G << " W/(m^2·K)" << std::endl;
 	    std::cout << "   [DONE]" << std::endl;
 	}
 
