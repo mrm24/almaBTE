@@ -503,6 +503,8 @@ int main(int argc, char** argv) {
                     coherence_Output_Buffer << kappa_coherence(1, 2) << "," << kappa_coherence(2, 2);
                 }
 
+                coherence_Output_Buffer << std::endl;
+
             }
 
             if (projectConductivity) { // write conductivity along chosen

@@ -275,13 +275,13 @@ void save_bulk_hdf5(const char* filename,
         write_string_attribute(vg_dset, "Units", "nm / ps");
 
         // Cartesian components of the Wigner matrix velocities.
-        hsize_t wigner_v_dims[] = {grid.nqpoints, 3, nmodes, nmodes};
-        DataSpace wigner_v_dspace(4, wigner_v_dims);
+        hsize_t wigner_v_dims[] = {grid.nqpoints, 3, nmodes*nmodes};
+        DataSpace wigner_v_dspace(3, wigner_v_dims);
         DataSet re_wigner_v_dset = h5f.createDataSet(
             "/qpoint_grid/re_wigner_v", PredType::IEEE_F64LE, wigner_v_dspace);
         DataSet im_wigner_v_dset = h5f.createDataSet(
             "/qpoint_grid/im_wigner_v", PredType::IEEE_F64LE, wigner_v_dspace);
-        hsize_t wigner_v_pos[] = {0, 0, 0, 0};
+        hsize_t wigner_v_pos[] = {0, 0, 0};
 
         for (hsize_t i = 0; i < grid.nqpoints; ++i) {
             wigner_v_pos[0] = i;
@@ -290,15 +290,14 @@ void save_bulk_hdf5(const char* filename,
                 wigner_v_pos[1] = j1;
 
                 for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-                    wigner_v_pos[2] = j2;
 
                         for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
 
-                            wigner_v_pos[3] = j3;
+                            wigner_v_pos[2] = j2+nmodes*j3;
 
                             wigner_v_dspace.selectElements(H5S_SELECT_SET, 1, wigner_v_pos);
                             auto value =
-                                grid.get_spectrum_at_q(i).wigner_v(j1, j2*nmodes+j3);
+                                grid.get_spectrum_at_q(i).wigner_v(j1, j2+nmodes*j3);
                             double re = value.real();
                             double im = value.imag();
                             re_wigner_v_dset.write(
@@ -636,7 +635,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         hsize_t omega_count[2];
         hsize_t vg_pos[3];
         hsize_t wf_pos[3];
-        hsize_t wigner_v_pos[4];
+        hsize_t wigner_v_pos[3];
         double value;
         double re;
         double im;
@@ -682,7 +681,6 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
 
                 for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
                     vg_pos[2] = j2;
-                    wigner_v_pos[2] = j2;
                     vg_dspace.selectElements(H5S_SELECT_SET, 1, vg_pos);
                     vg_dset.read(
                         &value, PredType::NATIVE_DOUBLE, scalar, vg_dspace);
@@ -690,7 +688,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
                     vg(j1, j2) = value;
 
                     for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
-                        wigner_v_pos[4] = j3;
+                        wigner_v_pos[2] = j2+nmodes*j3;
                         wigner_v_dspace.selectElements(H5S_SELECT_SET, 1, wigner_v_pos);
                         re_wigner_v_dset.read(
                             &re, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
@@ -698,7 +696,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
                             &im, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
                         boost::mpi::broadcast(comm, re, 0);
                         boost::mpi::broadcast(comm, im, 0);
-                        wigner_v(j1, j2*nmodes+j3) = std::complex<double>(re, im);
+                        wigner_v(j1, j2+nmodes*j3) = std::complex<double>(re, im);
                     }
                 }
             }
@@ -734,7 +732,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
                     for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
                         boost::mpi::broadcast(comm, re, 0);
                         boost::mpi::broadcast(comm, im, 0);
-                        wigner_v(j1, j2*nmodes+j3) = std::complex<double>(re, im);
+                        wigner_v(j1, j2+nmodes*j3) = std::complex<double>(re, im);
                     }
                 }
             }

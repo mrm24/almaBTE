@@ -18,6 +18,7 @@
 #include <bulk_properties.hpp>
 #include <analytic1d.hpp>
 #include <boost/math/special_functions/pow.hpp>
+#include <iostream>
 
 namespace alma {
 Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
@@ -83,46 +84,53 @@ Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
     if ((static_cast<std::size_t>(w.rows()) != nmodes) ||
         (static_cast<std::size_t>(w.cols()) != grid.nqpoints))
         throw alma::value_error("inconsistent dimensions");
+
+    constexpr std::complex<double> zero(0.0,0.0);
+
     Eigen::MatrixXcd nruter(3, 3);
-    nruter.fill(std::complex<double>(0.,0.));
+    nruter.fill(zero);
 
     for (decltype(nequiv) iequiv = 0; iequiv < nequiv; ++iequiv) {
         
-        auto iq0 = grid.get_representative(iequiv);
-        auto sp0 = grid.get_spectrum_at_q(iq0);
+        auto iq_representative = grid.get_representative(iequiv);
+        auto sp_representative = grid.get_spectrum_at_q(iq_representative);
 
         // Modes coupling with 0 frequency are ignored (i.e. acoustic modes at Gamma).
         for (decltype(nmodes) im = 0; im < nmodes; ++im) {
+	    
+            // for (auto axis : {0,1,2} ) std::cout << iq_representative << '\t' << im << '\t' << axis << '\t' <<
+		    // sp_representative.wigner_v(axis,im*nmodes + im).real() - sp_representative.vg(axis,im) << std::endl;
 
-            if (alma::almost_equal(sp0.omega(im),0.)) continue;
-            double Gamma = w(im, iq0);
+            if (alma::almost_equal(sp_representative.omega(im),0.)) continue;
             
-            for (decltype(nmodes) imp = 0; imp < nmodes; ++im) {
+            for (decltype(nmodes) imp = 0; imp < nmodes; ++imp) {
+                if (alma::almost_equal(sp_representative.omega(imp),0.) || im == imp) continue;
 
-                if (alma::almost_equal(sp0.omega(imp),0.) || im == imp) continue;
-                double Gammap = w(imp, iq0);
+                auto Gamma_summation = w(im,iq_representative) + w(imp, iq_representative);
+                auto omega_diff      = sp_representative.omega(imp) - sp_representative.omega(im);
+                auto omega_sum       = sp_representative.omega(imp) + sp_representative.omega(im);
 
-                // The complex elements of the matrix should vanish in the total summation
-                // I keep them until the end for a last sanity check
-                Eigen::Matrix3cd wigner_vvp = (
-                    sp0.wigner_v.col(im+nmodes*imp).matrix() * 
-                    sp0.wigner_v.col(imp+nmodes*im).matrix().transpose());
+                Eigen::MatrixXcd outer(3, 3);
+                outer.fill(zero);
 
-                auto Gamma_factor  = 0.5 * (Gamma + Gammap) / (
-                    boost::math::pow<2>(sp0.omega(imp) - sp0.omega(im)) +
-                    0.25 * boost::math::pow<2>(  Gamma + Gammap ));
+                for (auto iq : grid.get_equivalence(iequiv)) {
+                    auto sp = grid.get_spectrum_at_q(iq);
+                    Eigen::VectorXcd left_wigner_vg  = sp.wigner_v.col(im  + nmodes * imp);
+                    Eigen::VectorXcd right_wigner_vg = sp.wigner_v.col(imp + nmodes * im );
+                    outer += left_wigner_vg * right_wigner_vg.transpose();
+                }
 
-                auto Cfactor = alma::bose_einstein_kernel(sp0.omega[im], T) / sp0.omega[im] +
-                               alma::bose_einstein_kernel(sp0.omega[imp], T) / sp0.omega[imp];
+                auto Gamma_factor  = 0.5 * Gamma_summation / (boost::math::pow<2>(omega_diff) + 0.25 * boost::math::pow<2>(Gamma_summation));
+                auto Cfactor = alma::bose_einstein_kernel(sp_representative.omega[im], T) / sp_representative.omega[im] +
+                               alma::bose_einstein_kernel(sp_representative.omega[imp], T) / sp_representative.omega[imp];
 
-                nruter += 0.25 * (sp0.omega(imp) + sp0.omega(im)) * Cfactor *
-                        Gamma_factor * wigner_vvp;
+                nruter += omega_sum * Cfactor * Gamma_factor * outer;
 
             }
         }
     }
 
-    nruter = (1e21 * alma::constants::kB / poscar.V / grid.nqpoints) * nruter;
+    nruter = 0.25 * (1e21 * alma::constants::kB / poscar.V / grid.nqpoints) * nruter;
 
     /// Symmetrise the complex kappa tensor
 

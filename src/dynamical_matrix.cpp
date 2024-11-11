@@ -352,6 +352,56 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     for (auto i = 0; i < omega.size(); ++i) {
         omega(i) = alma::ssqrt(omega2(i));
     }
+
+    /// Build Wigner velocities
+    /// First create a list of the degenerate subspaces
+    std::vector<std::pair<std::size_t,std::size_t>> subspaces;
+    auto subspace_init = 0;
+    for (size_t i = 1; i < omega.size(); ++i) {
+        if (!almost_equal(omega(i),omega(i - 1)) or true) {
+            subspaces.emplace_back(subspace_init, i - 1);
+            subspace_init = i;
+        }
+    }
+    subspaces.emplace_back(subspace_init, omega.size() - 1);
+
+    /// Iterate over the degenerate subspaces and 
+    /// treat them in the appropiate way
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        for (auto subspace_left : subspaces) {
+
+            // Build left degenerate safe eigenvectors
+            auto dim_left = subspace_left.second - subspace_left.first + 1;
+            Eigen::MatrixXcd vectors_left = (subspace_left.first == subspace_left.second) ?
+                                            wfs.block(0, subspace_left.first, ndof, dim_left) :
+                                            solve_degeneracy(matrices[axis + 1], wfs.block(0, subspace_left.first, ndof, dim_left));
+
+            for (auto subspace_right : subspaces){
+
+                auto dim_right = subspace_right.second - subspace_right.first + 1;
+                Eigen::MatrixXcd vectors_right = (subspace_right.first == subspace_right.second) ?
+                                            wfs.block(0, subspace_right.first, ndof, dim_right) :
+                                            solve_degeneracy(matrices[axis + 1], wfs.block(0, subspace_right.first, ndof, dim_right));
+
+                for (auto i = 0; i < dim_left; ++i)
+                    for (auto j = 0; j < dim_right; ++j) {
+                        auto istate = i + subspace_left.first;
+                        auto jstate = j + subspace_right.first;
+                        wigner_v(axis,istate+ndof*jstate) = vectors_left.col(i)
+                                                            .dot(matrices[axis + 1] * vectors_right.col(j));
+
+                        if (almost_equal(omega(istate),0.) or almost_equal(omega(jstate),0.)) {
+                            wigner_v(axis,istate+ndof*jstate) = std::complex<double>(0.0,0.0);
+                        }
+                        else{
+                            wigner_v(axis,istate+ndof*jstate) /= 2 * omega(istate) + omega(jstate);
+                            //2 * std::sqrt(omega(istate) * omega(jstate));//omega(istate) + omega(jstate);
+                        }
+                    }
+            }
+        }
+    }
+
     auto start = 0;
     // Degenerate subspaces are treated together in order to have a univocal,
     // and hopefully physically correct, estimate of the group velocities.
@@ -359,16 +409,18 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     // eigenvectors that diagonalize d D / d q_x over the degenerate subspace,
     // and so on.
     for (auto i = 1; i <= omega.size(); ++i) {
-        if (i == omega.size() || !almost_equal(omega(i), omega(start))) {
+        if (i == omega.size() || !almost_equal(omega(i), omega(start))||true) {
             int dim = i - start;
             if (!almost_equal(omega(start), 0.)) {
                 // Shortcut for non-degenerate cases.
                 if (dim == 1) {
-                    for (auto j = 0; j < 3; ++j)
+                    for (auto j = 0; j < 3; ++j) {
                         vg(j, start) =
                             wfs.col(start)
                                 .dot(matrices[j + 1] * wfs.col(start))
                                 .real();
+                    }
+
                     vg.col(start) /= (2. * omega(start));
                 }
                 // General implementation.
@@ -399,19 +451,13 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
         }
     }
 
-    // With the unique set of eigenvectors compute the Wigner generalization
-    // to the velocities
-    for (auto i = 0; i < ndof; ++i) {
-        for (auto j = 0; j < ndof; ++j) {
-            for (auto k = 0; k < 3; ++k) {
-                wigner_v(k,i*ndof+j) = wfs.col(i).dot(matrices[k + 1] * wfs.col(j));
-            } 
-
-            // See Eq. 34 in 10.1103/PhysRevB.106.024312
-            wigner_v.col(i*ndof+j) /= omega(i) + omega(j); 
-
-        } 
-    }
+    // static int iq = 0;
+    //
+    // for (int ib=0; ib < ndof; ++ib) for (int axis = 0; axis < 3; ++axis){
+    //     std::cout << iq << '\t' << ib << '\t' << axis << '\t' << wigner_v(axis,ib+ndof*ib).real() << '\t' <<  vg(axis,ib) << std::endl;
+    // }
+    //
+    // iq++;
 
     return alma::make_unique<Spectrum_at_point>(omega, wfs, vg, wigner_v);
 }
