@@ -96,10 +96,9 @@ Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
         auto sp_representative = grid.get_spectrum_at_q(iq_representative);
 
         // Modes coupling with 0 frequency are ignored (i.e. acoustic modes at Gamma).
+	// However, we process Gamma as for non-primitive cells it can contain
+	// points that contribute
         for (decltype(nmodes) im = 0; im < nmodes; ++im) {
-	    
-            // for (auto axis : {0,1,2} ) std::cout << iq_representative << '\t' << im << '\t' << axis << '\t' <<
-		    // sp_representative.wigner_v(axis,im*nmodes + im).real() - sp_representative.vg(axis,im) << std::endl;
 
             if (alma::almost_equal(sp_representative.omega(im),0.)) continue;
             
@@ -145,7 +144,6 @@ Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
 
     /// Check that the imaginary part is small
     if (!alma::almost_equal(nruter.imag().maxCoeff(),0.)){
-        std::cerr << nruter << std::endl;
         throw alma::value_error("Imaginary terms of the coherence contribution are not null.");
     }
 

@@ -355,10 +355,11 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
 
     /// Build Wigner velocities
     /// First create a list of the degenerate subspaces
+    /// to properly tackle the degeneracy
     std::vector<std::pair<std::size_t,std::size_t>> subspaces;
     auto subspace_init = 0;
     for (size_t i = 1; i < omega.size(); ++i) {
-        if (!almost_equal(omega(i),omega(i - 1)) or true) {
+        if (!almost_equal(omega(i),omega(i - 1))) {
             subspaces.emplace_back(subspace_init, i - 1);
             subspace_init = i;
         }
@@ -379,6 +380,7 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
             for (auto subspace_right : subspaces){
 
                 auto dim_right = subspace_right.second - subspace_right.first + 1;
+		// Build right degenerate safe eigenvector
                 Eigen::MatrixXcd vectors_right = (subspace_right.first == subspace_right.second) ?
                                             wfs.block(0, subspace_right.first, ndof, dim_right) :
                                             solve_degeneracy(matrices[axis + 1], wfs.block(0, subspace_right.first, ndof, dim_right));
@@ -394,8 +396,7 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
                             wigner_v(axis,istate+ndof*jstate) = std::complex<double>(0.0,0.0);
                         }
                         else{
-                            wigner_v(axis,istate+ndof*jstate) /= 2 * omega(istate) + omega(jstate);
-                            //2 * std::sqrt(omega(istate) * omega(jstate));//omega(istate) + omega(jstate);
+                            wigner_v(axis,istate+ndof*jstate) /= omega(istate) + omega(jstate);
                         }
                     }
             }
@@ -450,14 +451,6 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
             start = i;
         }
     }
-
-    // static int iq = 0;
-    //
-    // for (int ib=0; ib < ndof; ++ib) for (int axis = 0; axis < 3; ++axis){
-    //     std::cout << iq << '\t' << ib << '\t' << axis << '\t' << wigner_v(axis,ib+ndof*ib).real() << '\t' <<  vg(axis,ib) << std::endl;
-    // }
-    //
-    // iq++;
 
     return alma::make_unique<Spectrum_at_point>(omega, wfs, vg, wigner_v);
 }
