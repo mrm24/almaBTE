@@ -341,6 +341,7 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
     auto ndof = this->blocks[0].cols();
     auto matrices = this->build(q);
+    int natoms = ndof/3;
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> solver(matrices[0]);
     auto omega2 = solver.eigenvalues();
@@ -353,8 +354,41 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
         omega(i) = alma::ssqrt(omega2(i));
     }
 
-    /// Build Wigner velocities
-    /// First create a list of the degenerate subspaces
+    /// Build Wigner velocities. See 10.1103/PhysRevX.12.041011 
+    /// for the theoretical framework.
+    
+    /// Build matrices needed to account for the phase choice within almaBTE.
+    /// In particular, in almaBTE we do not include atomic positions within the phase (henceforth steplike convention).
+    /// While for LBTE quantities this is not relevant, in LWTE the phase choice is important
+    /// and the atomic positions need to be included in the phase (henceforth smooth convention).
+    /// Here, we use unitary transformations for accounting our phase choice.
+    
+    /// Build unitary transform between smooth and steplike convetion for the eigenvectors
+    Eigen::MatrixXcd U = Eigen::MatrixXcd(ndof,ndof);
+    for (auto id_atom = 0; id_atom < natoms; ++id_atom) {
+        Eigen::Vector3d tau_ = structure.positions.col(id_atom);
+        auto phase = std::exp(alma::constants::imud * 2.0 * alma::constants::pi * q.dot(tau_));
+        for (auto cartesian_dir = 0; cartesian_dir < 3; ++cartesian_dir) {
+            U(3*id_atom + cartesian_dir, 3*id_atom + cartesian_dir) = phase;
+        }
+    }
+
+    // We need the inverse to obtain the vectors in the smooth convetion.
+    // We directly invert it; as it is not a big matrix, and it pays the price of solving N times
+    // a linear system.
+    Eigen::MatrixXcd invU = U.inverse();
+
+    /// Build the positions vectors for the phase correction in the wigner velocities.
+    Eigen::ArrayXXd tau(3,ndof);
+
+    for (auto id_atom = 0; id_atom < natoms; ++id_atom) {
+	Eigen::Vector3d tau_ = structure.lattvec * structure.positions.col(id_atom);
+	for (auto cartesian_dir = 0; cartesian_dir < 3; ++cartesian_dir) {
+            tau.block(cartesian_dir, 3*id_atom, 1, 3).setConstant(tau_(cartesian_dir));
+        }
+    }
+
+    /// Second, we create a list of the degenerate subspaces
     /// to properly tackle the degeneracy
     std::vector<std::pair<std::size_t,std::size_t>> subspaces;
     auto subspace_init = 0;
@@ -376,14 +410,18 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
             Eigen::MatrixXcd vectors_left = (subspace_left.first == subspace_left.second) ?
                                             wfs.block(0, subspace_left.first, ndof, dim_left) :
                                             solve_degeneracy(matrices[axis + 1], wfs.block(0, subspace_left.first, ndof, dim_left));
+            /// Obtain the left eignevectors in the smooth convention
+            Eigen::MatrixXcd vectors_left_smooth = invU * vectors_left;
 
             for (auto subspace_right : subspaces){
 
                 auto dim_right = subspace_right.second - subspace_right.first + 1;
-		// Build right degenerate safe eigenvector
+                // Build right degenerate safe eigenvector
                 Eigen::MatrixXcd vectors_right = (subspace_right.first == subspace_right.second) ?
                                             wfs.block(0, subspace_right.first, ndof, dim_right) :
                                             solve_degeneracy(matrices[axis + 1], wfs.block(0, subspace_right.first, ndof, dim_right));
+                /// Obtain the right eignevectors in the smooth convention
+                Eigen::MatrixXcd vectors_right_smooth = invU * vectors_right;
 
                 for (auto i = 0; i < dim_left; ++i)
                     for (auto j = 0; j < dim_right; ++j) {
@@ -397,6 +435,12 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
                         }
                         else{
                             wigner_v(axis,istate+ndof*jstate) /= omega(istate) + omega(jstate);
+			    /// Now account by the fact that in almaBTE we are using the dynamical matrix convention
+                            /// that does not have the atomic positions in the phase. See Eq. 50 in 10.1103/PhysRevX.12.041011.
+                            auto phase_correction = -alma::constants::imud * ( omega(jstate) - omega(istate) ) *
+                                                     vectors_left_smooth.col(i).dot(
+                                                     (tau.transpose().col(axis).array() * vectors_right_smooth.col(j).array()).matrix());
+			    wigner_v(axis,istate+ndof*jstate) += phase_correction; 
                         }
                     }
             }

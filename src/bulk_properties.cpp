@@ -36,8 +36,8 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
     Eigen::MatrixXd nruter(3, 3);
     nruter.fill(0.);
 
-    // The Gamma point is ignored.
-    for (decltype(nequiv) iequiv = 1; iequiv < nequiv; ++iequiv) {
+    // The zero frequency and/or velocity states are ignored.
+    for (decltype(nequiv) iequiv = 0; iequiv < nequiv; ++iequiv) {
         auto iq0 = grid.get_representative(iequiv);
         auto sp0 = grid.get_spectrum_at_q(iq0);
 
@@ -45,6 +45,9 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
             double tau = (w(im, iq0) == 0.) ? 0. : (1. / w(im, iq0));
             Eigen::MatrixXd outer(3, 3);
             outer.fill(0.);
+
+	    if (alma::almost_equal(sp0.omega(im),0.) or 
+	        alma::almost_equal(sp0.vg.col(im).matrix().norm(),0.)) continue;
 
             for (auto iq : grid.get_equivalence(iequiv)) {
                 auto sp = grid.get_spectrum_at_q(iq);

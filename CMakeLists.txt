@@ -74,12 +74,15 @@ include_directories(SYSTEM ${MPI_CXX_INCLUDE_PATH})
 string(CONCAT CMAKE_CXX_FLAGS ${MPI_CXX_COMPILE_FLAGS})
 string(CONCAT CMAKE_CXX_LINK_FLAGS ${MPI_CXX_LINK_FLAGS})
 
+# Detect OpenMP
+find_package(OpenMP REQUIRED) 
+
 # Compiler flags (currently only for g++ or clang++).
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall")
+    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS}")
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall -Wno-unused-local-typedef")
+    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS} -Wno-unused-local-typedef")
 endif()
 
 # Set up some variables so that they can be used in the code.
