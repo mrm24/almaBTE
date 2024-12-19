@@ -84,7 +84,7 @@ std::unique_ptr<Crystal_structure> load_POSCAR(const char* filename) {
 
     // Make sure that we store lattice coordinates.
     if (cartesian)
-        positions = lattvec.colPivHouseholderQr().solve(positions);
+        positions = lattvec.colPivHouseholderQr().solve(positions / 10.);
 
     // The code expects direct coordinates to lie in the
     // [0.,1.) range.
