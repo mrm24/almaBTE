@@ -125,10 +125,7 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
 
     std::string first_line;
     std::getline(f, first_line);
-    std::vector<std::string> line_elements;
-    boost::split(line_elements, first_line, boost::is_any_of("\t "));
-    std::vector<int> fc_sizes;
-    for (auto& element: line_elements) fc_sizes.push_back(boost::lexical_cast<int>(element));
+    std::vector<int> fc_sizes = tokenize_homogeneous_line<int>(first_line);
 
     if (fc_sizes.size() == 1) {
 	format = force_constants_format::old;
@@ -143,10 +140,8 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
 	throw value_error("format of the FORCE_CONSTANTS is not recognized");
     }
 
-    std::array<int,2> ntot;
-    f >> ntot[0];
-    ntot[1] = ntot[0];
-    if ( format != force_constants_format::old) f >> ntot[1];
+    std::array<int,2> ntot = {fc_sizes[0], fc_sizes[0]};
+    if ( format != force_constants_format::old) ntot[1] = fc_sizes[1];
     auto natoms = cell.get_natoms();
     auto ndof = 3 * natoms;
     auto nexpected = na * nb * nc * natoms;
