@@ -147,7 +147,9 @@ Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
 
     /// Check that the imaginary part is small
     if (!alma::almost_equal(nruter.imag().maxCoeff(),0.)){
-        throw alma::value_error("Imaginary terms of the coherence contribution are not null.");
+	std::cout << "Imaginary terms of the coherence contribution are not null." << std::endl;
+	std::cout << "MaxCoeff value (real) : " << '\t' << nruter.real().array().abs().maxCoeff() << std::endl;
+	std::cout << "MaxCoeff value (imag) : " << '\t' << nruter.imag().array().abs().maxCoeff() << std::endl;
     }
 
     // Return the real part

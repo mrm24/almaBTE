@@ -364,10 +364,11 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     /// Here, we use unitary transformations for accounting our phase choice.
     
     /// Build unitary transform between smooth and steplike convetion for the eigenvectors
-    Eigen::MatrixXcd U = Eigen::MatrixXcd(ndof,ndof);
+    Eigen::MatrixXcd U = Eigen::MatrixXcd::Zero(ndof,ndof);
     for (auto id_atom = 0; id_atom < natoms; ++id_atom) {
-        Eigen::Vector3d tau_ = structure.positions.col(id_atom);
-        auto phase = std::exp(alma::constants::imud * 2.0 * alma::constants::pi * q.dot(tau_));
+        Eigen::Vector3d tau_ = structure.positions.col(id_atom).transpose();
+	tau_ = structure.lattvec * tau_;
+        auto phase = std::exp(alma::constants::imud * q.dot(tau_));
         for (auto cartesian_dir = 0; cartesian_dir < 3; ++cartesian_dir) {
             U(3*id_atom + cartesian_dir, 3*id_atom + cartesian_dir) = phase;
         }
