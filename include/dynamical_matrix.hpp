@@ -122,6 +122,8 @@ public:
 // - wang  : J. Phys.: Condens. Matter. 22, 202201 (2010)
 // - gonze : Phys. Rev. B 55, 10355 (1997)
 enum class nonanalytic_treatment {none = -1, wang = 0, gonze = 1};
+// Print for the enum class
+std::ostream& operator<<(std::ostream& os, const nonanalytic_treatment& method);
 
 /// Factory of Dynamical_matrix objects.
 class Dynamical_matrix_builder {

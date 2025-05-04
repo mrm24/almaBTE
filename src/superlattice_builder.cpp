@@ -285,10 +285,10 @@ int main(int argc, char** argv) {
         else if (v.first == "nonanalytic_treatment") {
             std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
             alma::string_to_lower(my_nac);
-            if (my_nac == "gonze") {
+            if (my_nac.find("gonze") != std::string::npos) {
                 nonanalytic_method = alma::nonanalytic_treatment::gonze;
             }
-            else if (my_nac == "wang") {
+            else if (my_nac.find("wang") != std::string::npos) {
                 nonanalytic_method = alma::nonanalytic_treatment::wang;
             }
             else {

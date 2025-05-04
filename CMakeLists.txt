@@ -111,6 +111,8 @@ else()
 endif()
 message(STATUS "Boost include directory: ${Boost_INCLUDE_DIR}")
 message(STATUS "Boost library directory: ${Boost_LIBRARY_DIR}")
+include_directories(${Boost_INCLUDE_DIR})
+link_directories(${Boost_LIBRARY_DIR})
 add_definitions(-DBOOST_LOG_DYN_LINK)
 set(Boost_USE_MULTITHREADED OFF)
 
