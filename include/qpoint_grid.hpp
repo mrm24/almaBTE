@@ -61,6 +61,7 @@ public:
                const Symmetry_operations& symms,
                const Harmonic_ifcs& force_constants,
                const Dielectric_parameters& born,
+               const nonanalytic_treatment NAC_method,
                int _na,
                int _nb,
                int _nc);

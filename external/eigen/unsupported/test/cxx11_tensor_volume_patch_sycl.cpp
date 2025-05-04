@@ -13,7 +13,7 @@
 
 #define EIGEN_TEST_NO_LONGDOUBLE
 #define EIGEN_TEST_NO_COMPLEX
-#define EIGEN_TEST_FUNC cxx11_tensor_volume_patch_sycl
+
 #define EIGEN_DEFAULT_DENSE_INDEX_TYPE int64_t
 #define EIGEN_USE_SYCL
 
@@ -166,9 +166,9 @@ static void test_entire_volume_patch_sycl(const Eigen::SyclDevice& sycl_device)
   const int dy = patch_y - 1;
   const int dx = patch_x - 1;
 
-  const int forward_pad_z = dz - dz / 2;
-  const int forward_pad_y = dy - dy / 2;
-  const int forward_pad_x = dx - dx / 2;
+  const int forward_pad_z = dz / 2;
+  const int forward_pad_y = dy / 2;
+  const int forward_pad_x = dx / 2;
 
   for (int pz = 0; pz < patch_z; pz++) {
     for (int py = 0; py < patch_y; py++) {
@@ -214,7 +214,7 @@ std::cout << "Running on " << s.template get_info<cl::sycl::info::device::name>(
 test_single_voxel_patch_sycl<DataType, int64_t>(sycl_device);
 test_entire_volume_patch_sycl<DataType, int64_t>(sycl_device);
 }
-void test_cxx11_tensor_volume_patch_sycl()
+EIGEN_DECLARE_TEST(cxx11_tensor_volume_patch_sycl)
 {
 for (const auto& device :Eigen::get_sycl_supported_devices()) {
   CALL_SUBTEST(sycl_tensor_volume_patch_test_per_device<float>(device));

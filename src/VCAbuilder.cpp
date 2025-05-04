@@ -23,6 +23,7 @@
 #include <cmakevars.hpp>
 #include <utilities.hpp>
 #include <structures.hpp>
+#include <dynamical_matrix.hpp>
 #include <vc.hpp>
 #include <vasp_io.hpp>
 #include <bulk_hdf5.hpp>
@@ -72,6 +73,8 @@ std::map<std::string, std::vector<double>> parametric_allcombinations;
 std::vector<std::string> mixparameterName;
 // overwrite H5 file if it already exists?
 bool overwrite = false;
+// NAC method. The default is the Wang method.
+alma::nonanalytic_treatment nonanalytic_method = alma::nonanalytic_treatment::wang;
 ////////////////////////////////////////////
 
 // Helper function to list combinations of parametric mix fractions
@@ -320,6 +323,7 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
                                                   syms,
                                                   *ifcs,
                                                   *born,
+                                                  nonanalytic_method,
                                                   gridDensityA,
                                                   gridDensityB,
                                                   gridDensityC);
@@ -332,6 +336,29 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
 
     grid->enforce_asr();
 
+    // Check if there are some negative frequencies
+    if (world.rank() == 0) {
+        for (std::size_t iq = 0; iq < grid->nqpoints; iq++) {
+            auto &sp = grid->get_spectrum_at_q(iq);
+            std::size_t num_negative = 0;
+            for (auto &freq : sp.omega) {
+                if (freq < 0) num_negative++;
+            }
+            if (num_negative > 0)  {
+                std::cout << "******* Warning : *********************************************\n";
+                std::cout << "- Point " << iq << " cotains at least one negative frequency.\n";
+                std::cout << "- If your material is polar please use Gonze method, for a few cases Wang method is known\n" <<
+                             "  to produce negative frequencies.\n";
+                std::cout << "- If you have a 2D material this might be due to the breakdown of the rotational sums.\n";
+                std::cout << "  We recommend to enforce them, as otherwise the ZA branch has not the proper quadratic dependency.\n";
+                std::cout << "- For materials forming polymorphic network please check the ZG method to learn how to generate the\n";
+                std::cout << "  correct harmonic and anharmonic IFCs.\n";
+                std::cout << "- For other cases it means either wrong IFCs or that your material is unstable.\n";
+                std::cout << "- Frequencies at iq = " << iq << ":" << '\n' << sp.omega.transpose() << std::endl;
+                std::cout << "***************************************************************\n";
+            }
+        }
+    }
     std::cout << "Finding 3-phonon processes" << std::endl;
     std::cout << "Using scalebroad = " << scalebroad << std::endl;
     // find allowed phonon processes
@@ -775,6 +802,7 @@ int alloyBuilder() {
                                                   syms,
                                                   *vc_ifcs,
                                                   *vc_born,
+                                                  nonanalytic_method,
                                                   gridDensityA,
                                                   gridDensityB,
                                                   gridDensityC);
@@ -939,6 +967,20 @@ int main(int argc, char** argv) {
             if (v.first == "broadening") {
                 scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
             }
+
+            if (v.first == "nonanalytic_treatment") {
+                std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
+                alma::string_to_lower(my_nac);
+                if (my_nac == "gonze") {
+                    nonanalytic_method = alma::nonanalytic_treatment::gonze;
+                }
+                else if (my_nac == "wang") {
+                    nonanalytic_method = alma::nonanalytic_treatment::wang;
+                }
+                else {
+                    throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
+                }  
+            } 
         }
     } // end singlecrystal
 
@@ -976,6 +1018,21 @@ int main(int argc, char** argv) {
             if (v.first == "broadening") {
                 scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
             }
+
+            if (v.first == "nonanalytic_treatment") {
+                std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
+		alma::string_to_lower(my_nac);
+                if (my_nac == "gonze") {
+                    nonanalytic_method = alma::nonanalytic_treatment::gonze;
+                }
+                else if (my_nac == "wang") {
+                    nonanalytic_method = alma::nonanalytic_treatment::wang;
+                }
+                else {
+                    throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
+                }  
+            } 
+            
         }
     } // end alloy
 
@@ -1041,6 +1098,21 @@ int main(int argc, char** argv) {
             if (v.first == "broadening") {
                 scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
             }
+
+            if (v.first == "nonanalytic_treatment") {
+                std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
+                alma::string_to_lower(my_nac);
+		if (my_nac == "gonze") {
+                    nonanalytic_method = alma::nonanalytic_treatment::gonze;
+                }
+                else if (my_nac == "wang") {
+                    nonanalytic_method = alma::nonanalytic_treatment::wang;
+                }
+                else {
+                    throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
+                }  
+            } 
+
         }
     } // end parametricalloy
 

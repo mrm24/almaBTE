@@ -23,6 +23,7 @@
 #include "gtest/gtest.h"
 #include <utilities.hpp>
 #include <vasp_io.hpp>
+#include <dynamical_matrix.hpp>
 #include <qpoint_grid.hpp>
 #include <processes.hpp>
 #include <beyondRTA.hpp>
@@ -50,7 +51,7 @@ TEST(beyondRTA_case, beyondRTA_test) {
         thirdorder_path.string().c_str(), *poscar);
 
     auto grid = alma::make_unique<alma::Gamma_grid>(
-        *poscar, syms, *force_constants, *born, 8, 8, 8);
+        *poscar, syms, *force_constants, *born, alma::nonanalytic_treatment::wang, 8, 8, 8);
     grid->enforce_asr();
 
     double Tref = 300.0;

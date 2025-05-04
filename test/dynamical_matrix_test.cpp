@@ -107,7 +107,7 @@ public:
 
         ndof = 3 * poscar->get_natoms();
         factory = alma::make_unique<alma::Dynamical_matrix_builder>(
-            *poscar, syms, *force_constants, *born);
+            *poscar, syms, *force_constants, *born, alma::nonanalytic_treatment::wang);
     }
 };
 

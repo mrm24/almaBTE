@@ -119,7 +119,7 @@ inline void dump_transmission_coefficient(const std::string& interface_model,
 
 
 /// Aliases
-using dynmat_info = std::tuple<std::string,int,int,int,bool,std::string>;
+using dynmat_info = std::tuple<std::string,int,int,int,bool,std::string,alma::nonanalytic_treatment>;
 
 int main(int argc, char** argv) {
     // set up MPI environment
@@ -266,7 +266,22 @@ int main(int argc, char** argv) {
                            fborn = alma::parseXMLfield<std::string>(*it,"born");
                        }
 
-                       dynmat_info_A = {fname,sA,sB,sC,born,fborn};
+                       alma::nonanalytic_treatment nonanalytic_method = alma::nonanalytic_treatment::none;
+                       if (v.first == "nonanalytic_treatment") {
+                           std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
+                           alma::string_to_lower(my_nac);
+                           if (my_nac == "gonze") {
+                                   nonanalytic_method = alma::nonanalytic_treatment::gonze;
+                           }
+                           else if (my_nac == "wang") {
+                                   nonanalytic_method = alma::nonanalytic_treatment::wang;
+                           }
+                           else {
+                                   throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
+                           }
+                       }
+
+                       dynmat_info_A = {fname,sA,sB,sC,born,fborn,nonanalytic_method};
 
                    }
                    if (it->first == "materialB") {
@@ -283,7 +298,22 @@ int main(int argc, char** argv) {
                            fborn = alma::parseXMLfield<std::string>(*it,"born");
                        }
 
-                       dynmat_info_B = {fname,sA,sB,sC,born,fborn};
+                       alma::nonanalytic_treatment nonanalytic_method = alma::nonanalytic_treatment::none;
+                       if (v.first == "nonanalytic_treatment") {
+                           std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
+                           alma::string_to_lower(my_nac);
+                           if (my_nac == "gonze") {
+                                   nonanalytic_method = alma::nonanalytic_treatment::gonze;
+                           }
+                           else if (my_nac == "wang") {
+                                   nonanalytic_method = alma::nonanalytic_treatment::wang;
+                           }
+                           else {
+                                   throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
+                           }
+                       }
+
+                       dynmat_info_B = {fname,sA,sB,sC,born,fborn,nonanalytic_method};
                    }
 
                 }
@@ -432,7 +462,8 @@ int main(int argc, char** argv) {
         }
         else if (interface_model == "AMM") {
 
-            /// AMM is heavy so it is parallelized
+            /// AMM is experimental
+	    std::cerr << "AMM model is experimental: do not use for production runs" << std::endl;
 
             ///Compute the dynamical matrices
             auto ifcs_A = alma::load_FORCE_CONSTANTS(std::get<0>(dynmat_info_A).c_str(),
@@ -442,11 +473,12 @@ int main(int argc, char** argv) {
                                                          std::get<3>(dynmat_info_A));
 
             std::unique_ptr<alma::Dielectric_parameters> born_A;
+	    alma::nonanalytic_treatment nac_A = std::get<6>(dynmat_info_A);
 
             if (std::get<4>(dynmat_info_A))
                 born_A = alma::load_BORN(std::get<5>(dynmat_info_A).c_str());
 
-            auto dyn_A = (std::get<4>(dynmat_info_A)) ? alma::Dynamical_matrix_builder(*poscar_A,*syms_A,*ifcs_A,*born_A) :
+            auto dyn_A = (std::get<4>(dynmat_info_A)) ? alma::Dynamical_matrix_builder(*poscar_A,*syms_A,*ifcs_A,*born_A,nac_A) :
                 alma::Dynamical_matrix_builder(*poscar_A,*syms_A,*ifcs_A);
 
             auto ifcs_B = alma::load_FORCE_CONSTANTS(std::get<0>(dynmat_info_B).c_str(),
@@ -456,11 +488,12 @@ int main(int argc, char** argv) {
                                                          std::get<3>(dynmat_info_B));
 
             std::unique_ptr<alma::Dielectric_parameters> born_B;
+	    alma::nonanalytic_treatment nac_B = std::get<6>(dynmat_info_B);
 
             if (std::get<4>(dynmat_info_B))
-                born_A = alma::load_BORN(std::get<5>(dynmat_info_B).c_str());
+                born_B = alma::load_BORN(std::get<5>(dynmat_info_B).c_str());
 
-            auto dyn_B = (std::get<4>(dynmat_info_B)) ? alma::Dynamical_matrix_builder(*poscar_B,*syms_B,*ifcs_B,*born_B) :
+            auto dyn_B = (std::get<4>(dynmat_info_B)) ? alma::Dynamical_matrix_builder(*poscar_B,*syms_B,*ifcs_B,*born_B,nac_B) :
                 alma::Dynamical_matrix_builder(*poscar_B,*syms_B,*ifcs_B);
 
             alma::AMM_interface myinterface(*poscar_A,*grid_A,*syms_A,uvector_A,dyn_A,

@@ -38,7 +38,7 @@ TEST(kappa_sg_case, kappa_sg_test) {
     auto born = alma::load_BORN(born_path.string().c_str());
 
     auto grid = alma::make_unique<alma::Gamma_grid>(
-        *poscar, syms, *force_constants, *born, 12, 12, 12);
+        *poscar, syms, *force_constants, *born, alma::nonanalytic_treatment::wang, 12, 12, 12);
 
     grid->enforce_asr();
 

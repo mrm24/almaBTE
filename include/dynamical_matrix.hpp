@@ -118,6 +118,11 @@ public:
     }
 };
 
+// Enumerator representing the method of non-analytical term correction
+// - wang  : J. Phys.: Condens. Matter. 22, 202201 (2010)
+// - gonze : Phys. Rev. B 55, 10355 (1997)
+enum class nonanalytic_treatment {none = -1, wang = 0, gonze = 1};
+
 /// Factory of Dynamical_matrix objects.
 class Dynamical_matrix_builder {
 public:
@@ -129,7 +134,8 @@ public:
     Dynamical_matrix_builder(const Crystal_structure& _structure,
                              const Symmetry_operations& syms,
                              const Harmonic_ifcs& fcs,
-                             const Dielectric_parameters& born);
+                             const Dielectric_parameters& born, 
+			                 const nonanalytic_treatment nonanalytic_method);
     /// Return the dynamical matrix and its derivatives
     /// at one point.
     ///
@@ -218,6 +224,8 @@ private:
     /// True if the Coulomb nonanalytic correction is taken into
     /// account.
     const bool nonanalytic;
+    /// The method to compute the nonanalytic correction
+    const nonanalytic_treatment nonanalytic_method;
     /// Dielectric parameters required for the nonanalytic
     /// correction.
     const Dielectric_parameters born;
@@ -238,13 +246,27 @@ private:
         const Eigen::Ref<const Eigen::Vector3d>& q) const;
 
     /// Return the nonanalytic part of the dynamical matrix and
-    /// its derivatives at one point.
+    /// its derivatives at one point. It uses Wang method (see 
+    /// J. Phys.: Condens. Matter. 22, 202201 (2010))
+    ///
+    /// @param[in] q - the q point in Cartesian coordinates
+    /// @return an array containing the long-range contribution to
+    /// the force constants and the three components of
+    /// its gradient. 
+    std::array<Eigen::ArrayXXcd, 4> build_nac_wang(
+        const Eigen::Ref<const Eigen::Vector3d>& q) const;
+
+    /// Return the nonanalytic part of the dynamical matrix and
+    /// its derivatives at one point using Gonze's algorithm
+    /// with Sigma equal to 0 (see Eq. 75 of 10.1103/PhysRevB.55.10355).
     ///
     /// @param[in] q - the q point in Cartesian coordinates
     /// @return an array containing the long-range contribution to
     /// the force constants and the three components of
     /// its gradient.
-    std::array<Eigen::ArrayXXd, 4> build_nac(
+    std::array<Eigen::ArrayXXcd, 4> build_nac_gonze(
         const Eigen::Ref<const Eigen::Vector3d>& q) const;
+
+
 };
 } // namespace alma

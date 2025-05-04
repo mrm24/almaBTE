@@ -70,6 +70,7 @@ Gamma_grid::Gamma_grid(const Crystal_structure& poscar,
                        const Symmetry_operations& symms,
                        const Harmonic_ifcs& force_constants,
                        const Dielectric_parameters& born,
+                       const nonanalytic_treatment NAC_method,
                        int _na,
                        int _nb,
                        int _nc)
@@ -85,7 +86,7 @@ Gamma_grid::Gamma_grid(const Crystal_structure& poscar,
     this->initialize_cpos();
     this->fill_equivalences(symms);
     this->fill_map(symms);
-    Dynamical_matrix_builder builder(poscar, symms, force_constants, born);
+    Dynamical_matrix_builder builder(poscar, symms, force_constants, born, NAC_method);
     boost::mpi::communicator world;
     auto my_spectrum = this->compute_my_spectrum(builder, symms, world);
     std::vector<decltype(my_spectrum)> all_spectra;

@@ -46,6 +46,9 @@ std::unique_ptr<T> make_unique(Args&&... args) {
     return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
 }
 
+inline void string_to_lower(std::string& str) {
+    std::transform(str.begin(), str.end(), str.begin(),[](unsigned char c){return std::tolower(c);});
+}
 
 /// Comparator function object template for a container of
 /// comparable objects.

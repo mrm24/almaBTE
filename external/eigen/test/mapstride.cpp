@@ -11,7 +11,6 @@
 
 template<int Alignment,typename VectorType> void map_class_vector(const VectorType& m)
 {
-  typedef typename VectorType::Index Index;
   typedef typename VectorType::Scalar Scalar;
 
   Index size = m.size();
@@ -50,7 +49,6 @@ template<int Alignment,typename VectorType> void map_class_vector(const VectorTy
 
 template<int Alignment,typename MatrixType> void map_class_matrix(const MatrixType& _m)
 {
-  typedef typename MatrixType::Index Index;
   typedef typename MatrixType::Scalar Scalar;
 
   Index rows = _m.rows(), cols = _m.cols();
@@ -164,6 +162,32 @@ template<int Alignment,typename MatrixType> void map_class_matrix(const MatrixTy
     VERIFY_IS_APPROX(map,s1*m);
   }
 
+  // test negative strides
+  {
+    Matrix<Scalar,Dynamic,1>::Map(a_array1, arraysize+1).setRandom();
+    Index outerstride = m.innerSize()+4;
+    Scalar* array = array1;
+
+    {
+      Map<MatrixType, Alignment, OuterStride<> > map1(array, rows, cols, OuterStride<>( outerstride));
+      Map<MatrixType, Unaligned, OuterStride<> > map2(array+(m.outerSize()-1)*outerstride, rows, cols, OuterStride<>(-outerstride));
+      if(MatrixType::IsRowMajor)  VERIFY_IS_APPROX(map1.colwise().reverse(), map2);
+      else                        VERIFY_IS_APPROX(map1.rowwise().reverse(), map2);
+    }
+
+    {
+      Map<MatrixType, Alignment, OuterStride<> > map1(array, rows, cols, OuterStride<>( outerstride));
+      Map<MatrixType, Unaligned, Stride<Dynamic,Dynamic> > map2(array+(m.outerSize()-1)*outerstride+m.innerSize()-1, rows, cols, Stride<Dynamic,Dynamic>(-outerstride,-1));
+      VERIFY_IS_APPROX(map1.reverse(), map2);
+    }
+
+    {
+      Map<MatrixType, Alignment, OuterStride<> > map1(array, rows, cols, OuterStride<>( outerstride));
+      Map<MatrixType, Unaligned, Stride<Dynamic,-1> > map2(array+(m.outerSize()-1)*outerstride+m.innerSize()-1, rows, cols, Stride<Dynamic,-1>(-outerstride,-1));
+      VERIFY_IS_APPROX(map1.reverse(), map2);
+    }
+  }
+
   internal::aligned_delete(a_array1, arraysize+1);
 }
 
@@ -199,10 +223,10 @@ void bug1453()
   VERIFY_IS_APPROX(RowMatrix32i::Map(data, InnerStride<>(2)), RowMatrixXi::Map(data, 3, 2, Stride<4,2>()));
 }
 
-void test_mapstride()
+EIGEN_DECLARE_TEST(mapstride)
 {
   for(int i = 0; i < g_repeat; i++) {
-    int maxn = 30;
+    int maxn = 3;
     CALL_SUBTEST_1( map_class_vector<Aligned>(Matrix<float, 1, 1>()) );
     CALL_SUBTEST_1( map_class_vector<Unaligned>(Matrix<float, 1, 1>()) );
     CALL_SUBTEST_2( map_class_vector<Aligned>(Vector4d()) );

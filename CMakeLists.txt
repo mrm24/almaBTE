@@ -1,5 +1,5 @@
 # Standard boilerplate.
-cmake_minimum_required(VERSION 3.6.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.27.0 FATAL_ERROR)
 project(ALMA CXX C)
 
 # Assume C++17 for all C++ source,
@@ -101,9 +101,16 @@ include_directories("${PROJECT_SOURCE_DIR}/external/randutils")
 include_directories("${PROJECT_SOURCE_DIR}/external/base-n/include")
 
 # Find some components from Boost.
-find_package(Boost COMPONENTS system filesystem mpi serialization log REQUIRED)
-include_directories(${Boost_INCLUDE_DIR})
-link_directories(${Boost_LIBRARY_DIR})
+if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.30")
+    find_package(Boost CONFIG REQUIRED COMPONENTS system filesystem mpi serialization log)
+    get_target_property(Boost_INCLUDE_DIR Boost::filesystem INTERFACE_INCLUDE_DIRECTORIES)
+    get_target_property(Boost_FILESYSTEM_LIB Boost::filesystem LOCATION)
+    get_filename_component(Boost_LIBRARY_DIR ${Boost_FILESYSTEM_LIB} DIRECTORY)
+else()
+    find_package(Boost REQUIRED COMPONENTS system filesystem mpi serialization log)
+endif()
+message(STATUS "Boost include directory: ${Boost_INCLUDE_DIR}")
+message(STATUS "Boost library directory: ${Boost_LIBRARY_DIR}")
 add_definitions(-DBOOST_LOG_DYN_LINK)
 set(Boost_USE_MULTITHREADED OFF)
 
