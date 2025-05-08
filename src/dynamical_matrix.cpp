@@ -328,6 +328,92 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_wang(
     return nruter;
 }
 
+// MIMIC QE
+// std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
+//     const Eigen::Ref<const Eigen::Vector3d>& q) const {
+//     constexpr double prefactor = constants::e * constants::e /
+//                                  constants::epsilon0 / constants::amu * 1e3;
+//
+//     auto ndof = this->blocks[0].cols();
+//     auto natoms = ndof / 3;
+//     // We need the 1st BZ q-point
+//     Eigen::Vector3d uq = this->structure.map_to_firstbz(q).col(0);
+//
+//     std::array<Eigen::ArrayXXcd, 4> nruter;
+//
+//     for (auto i = 0; i < 4; ++i)
+//         nruter[i].setZero(ndof, ndof);
+//
+//     auto Gmax  = 14.0;
+//     auto alpha = std::max({
+//             this->structure.rlattvec.col(0).squaredNorm(),
+//             this->structure.rlattvec.col(1).squaredNorm(),
+//             this->structure.rlattvec.col(2).squaredNorm()});
+//
+//     /// Get the G-mesh size, only those dimensions with periodicity are considered
+//     std::array<double,3> cell_g;
+//     cell_g[0] = this->na == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(0).norm()) + 1;
+//     cell_g[1] = this->nb == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(1).norm()) + 1;
+//     cell_g[2] = this->nc == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(2).norm()) + 1;
+//
+//     for (auto iga = -cell_g[0]; iga <= cell_g[0]; iga++)
+//         for (auto igb = -cell_g[1]; igb <= cell_g[1]; igb++)
+//             for (auto igc = -cell_g[2]; igc <= cell_g[2]; igc++) {
+//                 Eigen::Vector3d G = iga * this->structure.rlattvec.col(0) +
+//                                     igb * this->structure.rlattvec.col(1) +
+//                                     igc * this->structure.rlattvec.col(2);
+//
+//                 double GepsilonG = G.dot(this->born.epsilon * G);
+//
+//                 if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
+//                     auto decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
+//                     for (auto iatom = 0; iatom < natoms; iatom++) {
+//                         Eigen::MatrixXd zi{G.transpose() * this->born.born[iatom]};
+//                         for (auto jatom = 0; jatom < natoms; jatom++) {
+//                             Eigen::MatrixXd zj{G.transpose() * this->born.born[iatom]};
+//                             Eigen::Vector3d taudiff = this->structure.lattvec * (
+//                                 this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
+//                             Eigen::MatrixXd zij{zi.transpose() * zj};
+//                             auto phase = std::exp(constants::imud * G.dot(taudiff));
+//                             nruter[0].block<3, 3>(3 * iatom, 3 * iatom) -= (zij * phase * decay).array();
+//                         }
+//                     }
+//                 }
+//
+//                 Eigen::Vector3d Gq = G + uq;
+//                 GepsilonG = Gq.dot(this->born.epsilon * Gq);
+//                 if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
+//                     double decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
+//                     Eigen::Vector3d dGepsilonG = (this->born.epsilon + this->born.epsilon.transpose()) * Gq;
+//                     for (auto iatom = 0; iatom < natoms; iatom++) {
+//                         Eigen::MatrixXd zi{Gq.transpose() * this->born.born[iatom]};
+//                         for (auto jatom = 0; jatom < natoms; jatom++) {
+//                             Eigen::MatrixXd zj{Gq.transpose() * this->born.born[iatom]};
+//                             Eigen::Vector3d taudiff = this->structure.lattvec * (
+//                                 this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
+//                             Eigen::MatrixXd zij{zi.transpose() * zj};
+//                             auto phase = std::exp(constants::imud * Gq.dot(taudiff));
+//                             nruter[0].block<3, 3>(3 * iatom, 3 * jatom) += (zij * phase * decay).array();
+//                             for (int axis = 0; axis < 3; axis++) {
+//                                 nruter[axis+1].block<3, 3>(3 * iatom, 3 * jatom) += (decay * phase * (
+//                                     this->born.born[iatom].row(axis).transpose() * zj +
+//                                     zi.transpose() * this->born.born[jatom].row(axis) +
+//                                     zij * constants::imud * taudiff(axis) -
+//                                     zij * (dGepsilonG(axis) / alpha / 4.0 +  dGepsilonG(axis) / GepsilonG))).array();
+//                             }
+//                         }
+//                     }
+//                 }
+//     }
+//
+//     for (auto i = 0; i < 4; ++i) {
+//         nruter[i] *= prefactor / this->V;
+//         nruter[i] /= this->massmatrix;
+//     }
+//
+//     return nruter;
+// }
+
 std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
     constexpr double prefactor = constants::e * constants::e /
@@ -346,8 +432,8 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
         nruter[i].setZero(ndof, ndof);
 
     // Compute the cutoffs. TODO: is that enough?
-    constexpr int nG = 300;
-    auto G_cutoff = std::cbrt(0.75 * nG / constants::pi / this->V);
+    constexpr int Gmax = 14;
+    auto G_cutoff = Gmax * std::cbrt(8.0  * std::pow(constants::pi,3) / this->V);
     constexpr double exponential_cutoff = 1.0e-10;
     double GeG = G_cutoff * G_cutoff * this->born.epsilon.trace() / 3.0;
     auto Lambda  = std::sqrt(-0.25 * GeG * std::log(exponential_cutoff) );
@@ -358,6 +444,16 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     int Gb = this->nb == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(1).norm()) + 1;
     int Gc = this->nc == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(2).norm()) + 1;
 
+    // std::cout <<  "GONZE limits : "  <<  Ga << '\t' << Gb << '\t' << Gc << std::endl;
+    // std::cout <<  "GONZE G_cutoff : " <<  G_cutoff << std::endl;
+    // std::cout <<  "Lambda : " << Lambda << std::endl;
+    // std::cout <<  " L1 : " << this->structure.lattvec.col(0).transpose() << std::endl;
+    // std::cout <<  " L2 : " << this->structure.lattvec.col(1).transpose() << std::endl;
+    // std::cout <<  " L3 : " << this->structure.lattvec.col(2).transpose() << std::endl;
+    // std::cout <<  " R1 : " << this->structure.rlattvec.col(0).transpose() << std::endl;
+    // std::cout <<  " R2 : " << this->structure.rlattvec.col(1).transpose() << std::endl;
+    // std::cout <<  " R3 : " << this->structure.rlattvec.col(2).transpose() << std::endl;
+    
     // Obtain the set of G points within the cutoff
     std::vector<Eigen::Vector3d> Gvecs;
     Gvecs.reserve((2*Ga+1)*(2*Gb+1)*(2*Gc+1));
@@ -381,7 +477,6 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     Eigen::MatrixXcd A0 = Eigen::MatrixXcd::Zero(ndof,ndof);
     for (const auto &G : Gvecs) {
         Eigen::Vector3d K = G + q1stBZ;
-
         if (!alma::almost_equal(K.norm(),0.0)) {
             double KepsilonK = K.dot(this->born.epsilon * K);
             Eigen::MatrixXd KK = K * K.transpose();
@@ -392,7 +487,7 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
                 A.block<3, 3>(3 * iatom, 3 * jatom) += phase * decay * KK / KepsilonK;
             }
         }
-	// The q = 0 term
+        // The q = 0 term
         if (!alma::almost_equal(G.norm(),0.0)) {
             double GepsilonG = G.dot(this->born.epsilon * G);
             Eigen::MatrixXd GG = G * G.transpose();
@@ -435,13 +530,14 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     nruter[0] = Add;
 
     // TODO: derivatives
+
+    // Correct units
     for (auto i = 0; i < 4; ++i) {
         nruter[i] *= prefactor / this->V;
     }
     
     return nruter;
 }
-
 
 
 /// Pairwise summation of a vector of matrices or arrays. This reduces the
