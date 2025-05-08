@@ -63,25 +63,6 @@ Eigen::ArrayXXd build_mass_matrix(const Crystal_structure& structure) {
     return m.matrix() * m.matrix().transpose();
 }
 
-
-/// POD class representing a pair of atoms - one in unit cell (0, 0,
-/// 0) the other in an arbitrary unit cell cj, and the image of the
-/// latter in a number of unit cells cjp.
-class Atom_pair {
-public:
-    /// Index of the first atom in its unit cell.
-    int i;
-    /// Index of the second atom in its unit cell.
-    int j;
-    /// Unit cell the second atom belongs to in a regular
-    /// supercell representation.
-    Triple_int cj;
-    /// All unit cells that the image of the second atom
-    /// belongs to in a Wigner-Seitz supercell representation.
-    std::vector<Triple_int> cjp;
-};
-
-
 /// Find all atom pairs in a Wigner-Seitz representation
 /// of an na x nb x nc supercell.
 ///
@@ -178,6 +159,96 @@ void Dynamical_matrix_builder::copy_blocks(const Harmonic_ifcs& fcs) {
     // Convert from eV / A^2 / amu to (rad / ps)^2.
     for (auto& p : this->blocks)
         p *= constants::e / constants::amu * 1e-4;
+
+
+    // When Gonze's NAC is used one needs to substract the dipole-dipole
+    // interaction present in the supercell force constants for
+    // the conmensurate points. 
+    //
+    // See Eqs. 52-54 of 10.1088/1361-648X/acd831
+    //
+    if (this->nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::gonze))
+        remove_dipole_dipole(fcs, pairs);
+
+}
+
+void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
+                                                    std::vector<Atom_pair>& pairs){
+
+    auto natoms = this->structure.get_natoms();
+    auto ndof = 3 * natoms;
+
+    // Compute the number of conmensurate points
+    int n_commensurate = this->na*this->nb*this->nc;
+
+    // Get the conmensurate points
+    Eigen::MatrixXd conmensurate_points(3,n_commensurate);
+
+    int idx = 0;
+    for (int a = 0; a < this->na; a++)
+        for (int b = 0; b < this->nb; b++)
+            for (int c = 0; c < this->nc; c++) {
+                conmensurate_points(0,idx) = static_cast<double>(a) / this->na;
+                conmensurate_points(1,idx) = static_cast<double>(b) / this->nb;
+                conmensurate_points(2,idx) = static_cast<double>(c) / this->nc;
+                idx++;
+            }
+
+
+    // Obtain them in Cartesian coordinates
+    conmensurate_points = this->structure.rlattvec * conmensurate_points;
+
+    // Map to the first bz
+    for (int i = 0; i < n_commensurate; i++)
+        conmensurate_points.col(i) = this->structure.map_to_firstbz(conmensurate_points.col(i)).col(0);
+
+    // Now compute the dipole-dipole dynamical matrices and substract it from the supercell one
+    std::vector<Eigen::MatrixXcd> dynamical_matrix_sr(n_commensurate, Eigen::MatrixXcd::Zero(ndof,ndof));
+    for (int i = 0; i < n_commensurate; i++) {
+        auto nac = this->build_nac_gonze(conmensurate_points.col(i));
+        auto dyn = this->build(conmensurate_points.col(i));
+        dynamical_matrix_sr[i] = dyn[0] - nac[0].matrix();
+    }
+
+    // Compute the correct short range force constants
+    // This is done by inverse Fourier transforming the 
+    // short-range dynamical matrix
+    Triple_int_map<Eigen::MatrixXd> blocks;
+
+    for (auto p : pairs) {
+
+        Eigen::MatrixXcd fc_ij = Eigen::MatrixXcd::Zero(3,3);
+
+        for (int i = 0; i < n_commensurate; i++) {
+
+            // We average over equivalent pairs
+            std::complex<double> phase(0.,0.);
+            for (auto pp : p.cjp) {
+                Eigen::Vector3d Rb = pp[0] * this->structure.lattvec.col(0) +
+                                     pp[1] * this->structure.lattvec.col(1) +
+                                     pp[2] * this->structure.lattvec.col(2);
+                phase += std::exp(constants::imud * Rb.dot(conmensurate_points.col(i)));
+            }
+            fc_ij = phase * dynamical_matrix_sr[i].block<3, 3>(3 * p.i, 3* p.j) / p.cjp.size();
+        }
+
+        fc_ij /= n_commensurate;
+
+        for (auto pp : p.cjp) {
+            if (blocks.find(pp) == blocks.end()) {
+                blocks[pp] = Eigen::MatrixXd::Zero(ndof, ndof);
+            }
+	    // Note that the mass factor is not needed
+            blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) =
+                fc_ij.real();
+        }
+    }
+
+    // Overwrite the original force constants
+    // with the short range ones
+    auto kav = split_keys_and_values(blocks);
+    this->blocks.swap(std::get<1>(kav));
+
 }
 
 
@@ -264,81 +335,108 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     
     auto ndof = this->blocks[0].cols();
     auto natoms = ndof / 3;
-    // We need the 1st BZ q-point
-    Eigen::Vector3d uq = this->structure.map_to_firstbz(q).col(0);
+
+    // We need the 1st BZ q-point, as the term is not 
+    // per se periodical
+    Eigen::Vector3d q1stBZ = this->structure.map_to_firstbz(q).col(0);
 
     std::array<Eigen::ArrayXXcd, 4> nruter;
 
     for (auto i = 0; i < 4; ++i)
         nruter[i].setZero(ndof, ndof);
 
-
-    auto Gmax  = 14.0;
-    auto alpha = std::max({
-            this->structure.rlattvec.col(0).squaredNorm(),
-            this->structure.rlattvec.col(1).squaredNorm(),
-            this->structure.rlattvec.col(2).squaredNorm()});
+    // Compute the cutoffs. TODO: is that enough?
+    constexpr int nG = 300;
+    auto G_cutoff = std::cbrt(0.75 * nG / constants::pi / this->V);
+    constexpr double exponential_cutoff = 1.0e-10;
+    double GeG = G_cutoff * G_cutoff * this->born.epsilon.trace() / 3.0;
+    auto Lambda  = std::sqrt(-0.25 * GeG * std::log(exponential_cutoff) );
+    auto Lambda2 = Lambda * Lambda;
     
     /// Get the G-mesh size, only those dimensions with periodicity are considered
-    std::array<double,3> cell_g;
-    cell_g[0] = this->na == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(0).norm()) + 1;
-    cell_g[1] = this->nb == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(1).norm()) + 1;
-    cell_g[2] = this->nc == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(2).norm()) + 1;
+    int Ga = this->na == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(0).norm()) + 1;
+    int Gb = this->nb == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(1).norm()) + 1;
+    int Gc = this->nc == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(2).norm()) + 1;
 
-    for (auto iga = -cell_g[0]; iga <= cell_g[0]; iga++)
-        for (auto igb = -cell_g[1]; igb <= cell_g[1]; igb++)
-            for (auto igc = -cell_g[2]; igc <= cell_g[2]; igc++) {
+    // Obtain the set of G points within the cutoff
+    std::vector<Eigen::Vector3d> Gvecs;
+    Gvecs.reserve((2*Ga+1)*(2*Gb+1)*(2*Gc+1));
+
+    for (int iga = -Ga; iga <= Ga; iga++)
+        for (int igb = -Gb; igb <= Gb; igb++)
+            for (int igc = -Gc; igc <= Gc; igc++) {
                 Eigen::Vector3d G = iga * this->structure.rlattvec.col(0) +
                                     igb * this->structure.rlattvec.col(1) +
                                     igc * this->structure.rlattvec.col(2);
+                if (G.norm() <= G_cutoff) Gvecs.push_back(G);
+            }
 
-                double GepsilonG = G.dot(this->born.epsilon * G);
+    // Compute the matrix A and the A matrix at q=0
+    // The last is required to impose the translational invariance
+    //
+    // To detail, this implements the reciprocal space summation of Eq. 5
+    // in 10.1103/PhysRevB.50.13035
+    //
+    Eigen::MatrixXcd A  = Eigen::MatrixXcd::Zero(ndof,ndof);
+    Eigen::MatrixXcd A0 = Eigen::MatrixXcd::Zero(ndof,ndof);
+    for (const auto &G : Gvecs) {
+        Eigen::Vector3d K = G + q1stBZ;
 
-                if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
-                    auto decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
-                    for (auto iatom = 0; iatom < natoms; iatom++) {
-                        Eigen::MatrixXd zi{G.transpose() * this->born.born[iatom]};
-                        for (auto jatom = 0; jatom < natoms; jatom++) {
-                            Eigen::MatrixXd zj{G.transpose() * this->born.born[iatom]};
-                            Eigen::Vector3d taudiff = this->structure.lattvec * (
-                                this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
-                            Eigen::MatrixXd zij{zi.transpose() * zj};
-                            auto phase = std::exp(constants::imud * G.dot(taudiff));
-                            nruter[0].block<3, 3>(3 * iatom, 3 * iatom) -= (zij * phase * decay).array();
-                        }
-                    }
-                }
-
-		
-                Eigen::Vector3d Gq = G + uq;
-                GepsilonG = Gq.dot(this->born.epsilon * Gq);
-                if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
-                    double decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
-                    Eigen::Vector3d dGepsilonG = (this->born.epsilon + this->born.epsilon.transpose()) * Gq;
-                    for (auto iatom = 0; iatom < natoms; iatom++) {
-                        Eigen::MatrixXd zi{Gq.transpose() * this->born.born[iatom]};
-                        for (auto jatom = 0; jatom < natoms; jatom++) {
-                            Eigen::MatrixXd zj{Gq.transpose() * this->born.born[iatom]};
-                            Eigen::Vector3d taudiff = this->structure.lattvec * (
-                                this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
-                            Eigen::MatrixXd zij{zi.transpose() * zj};
-                            auto phase = std::exp(constants::imud * Gq.dot(taudiff));
-                            nruter[0].block<3, 3>(3 * iatom, 3 * jatom) += (zij * phase * decay).array();
-                            for (int axis = 0; axis < 3; axis++) {
-                                nruter[axis+1].block<3, 3>(3 * iatom, 3 * jatom) += (decay * phase * (
-                                    this->born.born[iatom].row(axis).transpose() * zj +
-                                    zi.transpose() * this->born.born[jatom].row(axis) +
-                                    zij * constants::imud * taudiff(axis) -
-                                    zij * (dGepsilonG(axis) / alpha / 4.0 +  dGepsilonG(axis) / GepsilonG))).array();
-                            }
-                        }
-                    }
-                }
+        if (!alma::almost_equal(K.norm(),0.0)) {
+            double KepsilonK = K.dot(this->born.epsilon * K);
+            Eigen::MatrixXd KK = K * K.transpose();
+            double decay = std::exp(-0.25*KepsilonK / Lambda2);
+            for (int iatom = 0; iatom < natoms; iatom++) for (int jatom = 0; jatom < natoms; jatom++) {
+                Eigen::Vector3d taudiff = this->structure.lattvec * (this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
+                std::complex<double> phase = std::exp(constants::imud * K.dot(taudiff));
+                A.block<3, 3>(3 * iatom, 3 * jatom) += phase * decay * KK / KepsilonK;
+            }
+        }
+	// The q = 0 term
+        if (!alma::almost_equal(G.norm(),0.0)) {
+            double GepsilonG = G.dot(this->born.epsilon * G);
+            Eigen::MatrixXd GG = G * G.transpose();
+            double decay = std::exp(-0.25*GepsilonG / Lambda2);
+            for (int iatom = 0; iatom < natoms; iatom++) for (int jatom = 0; jatom < natoms; jatom++) {
+                Eigen::Vector3d taudiff = this->structure.lattvec * (this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
+                std::complex<double> phase = std::exp(constants::imud * G.dot(taudiff));
+                A0.block<3, 3>(3 * iatom, 3 * jatom) += phase * decay * GG / GepsilonG;
+            }
+        }
     }
 
+    // Multiply A with the Born charges
+    Eigen::MatrixXcd hatA  = Eigen::MatrixXcd::Zero(ndof,ndof);
+    Eigen::MatrixXcd hatA0 = Eigen::MatrixXcd::Zero(ndof,ndof);
+    for (int iatom = 0; iatom < natoms; iatom++) for (int jatom = 0; jatom < natoms; jatom++) {
+        const Eigen::MatrixXd& Zi = this->born.born[iatom];
+        const Eigen::MatrixXd& Zj = this->born.born[jatom];
+
+        Eigen::MatrixXcd A_block = A.block<3,3>(3 * iatom, 3 * jatom);
+        hatA.block<3,3>(3 * iatom, 3 * jatom) += Zi * A_block * Zj.transpose();
+
+        Eigen::MatrixXcd A0_block = A0.block<3,3>(3 * iatom, 3 * jatom);
+        hatA0.block<3,3>(3 * iatom, 3 * jatom) += Zi * A0_block * Zj.transpose();
+
+    }
+
+    // Include mass factor
+    hatA  = (hatA.array()  / this->massmatrix).matrix();
+    hatA0 = (hatA0.array() / this->massmatrix).matrix();
+
+    Eigen::MatrixXcd Add(hatA);
+
+    // Impose the Translational invariance
+    for (int iatom = 0; iatom < natoms; iatom++) for (int katom = 0; katom < natoms; katom++) {
+        Add.block<3,3>(3 * iatom, 3 * iatom) -= hatA0.block<3,3>(3 * iatom, 3 * katom) *
+            std::sqrt(this->structure.get_mass(katom) / this->structure.get_mass(iatom));
+    }
+
+    nruter[0] = Add;
+
+    // TODO: derivatives
     for (auto i = 0; i < 4; ++i) {
-        nruter[i] *= 8 * prefactor * constants::pi;
-        nruter[i] /= this->V * this->massmatrix;
+        nruter[i] *= prefactor / this->V;
     }
     
     return nruter;
@@ -386,22 +484,15 @@ std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build(
     auto ndof = this->blocks[0].cols();
     auto coefficients = this->get_exponentials(q);
     // The nonanalytic correction is never applied at Gamma or at points
-    // on the surface of the BZ.
+    // on the surface of the BZ. Moreover, in this function we only
+    // correct using Wang's method.
     const bool nonanalytic =
-        this->nonanalytic && !almost_equal(0., qbz.norm()) && qbzs.cols() == 1;
+        this->nonanalytic && !almost_equal(0., qbz.norm()) && qbzs.cols() == 1 &&
+        this->nonanalytic_method == nonanalytic_treatment::wang;
 
     std::array<Eigen::ArrayXXcd, 4> nac;
-    if (nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::wang)) {
+    if (nonanalytic) {
         nac = this->build_nac_wang(q);
-    }
-    else if (nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::gonze)) {
-	nac = this->build_nac_gonze(q);
-    }
-    else if (nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::none)) {
-	throw value_error("nonanalytic_treatment::none is selected but NAC is required");
-    }
-    else if (nonanalytic){
-	throw value_error("Unkown NAC treatment");
     }
 
     std::array<Eigen::MatrixXcd, 4> nruter;
@@ -413,9 +504,7 @@ std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build(
     }
     for (decltype(nblocks) i = 0; i < nblocks; ++i) {
         term.array() = coefficients(i) * this->blocks[i];
-	/// The Wang method for the NACs provides IFCs, so it requires the 
-	/// phases and the mask (i.e. the weights).
-        if (nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::wang)) {
+        if (nonanalytic) {
             term.array() += coefficients(i) * this->masks[i].array() * nac[0];
         }
         terms.emplace_back(term);
@@ -426,7 +515,7 @@ std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build(
         for (decltype(nblocks) i = 0; i < nblocks; ++i) {
             term.array() = -this->cpos(j, i) * coefficients(i) *
                            this->blocks[i] * constants::imud;
-            if (nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::wang)) {
+            if (nonanalytic) {
                 term.array() -= this->cpos(j, i) * coefficients(i) *
                                 this->masks[i].array() * nac[0].array() *
                                 constants::imud;
@@ -436,13 +525,6 @@ std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build(
             terms.emplace_back(term);
         }
         nruter[j + 1] = eigen_pairwise_sum<Eigen::MatrixXcd>(terms);
-    }
-
-    // Gonze's method for the NAC is directly giving the proper
-    // dynamical matrix contribution, not the IFCs.
-    if (nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::gonze)) {
-	for (int i = 0; i < 4; i++) 
-		nruter[i] += nac[i].matrix();
     }
 
     return nruter;
@@ -472,8 +554,17 @@ Eigen::MatrixXcd solve_degeneracy(
 std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
     auto ndof = this->blocks[0].cols();
-    auto matrices = this->build(q);
     int natoms = ndof/3;
+
+    // Compute the Short-range + Wang_NAC dynamical matrix.
+    auto matrices = this->build(q);
+
+    // Compute the Gonze contribution (dipole-dipole( to the dynamical 
+    // matrix and its derivatives.
+    if (this->nonanalytic_method == nonanalytic_treatment::gonze) {
+        auto nac = this->build_nac_gonze(q);
+        for (int i = 0; i < 4; i++) matrices[i] += nac[i].matrix();
+    }
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> solver(matrices[0]);
     auto omega2 = solver.eigenvalues();

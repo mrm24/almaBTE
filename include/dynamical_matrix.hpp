@@ -118,6 +118,23 @@ public:
     }
 };
 
+/// POD class representing a pair of atoms - one in unit cell (0, 0,
+/// 0) the other in an arbitrary unit cell cj, and the image of the
+/// latter in a number of unit cells cjp.
+class Atom_pair {
+public:
+    /// Index of the first atom in its unit cell.
+    int i;
+    /// Index of the second atom in its unit cell.
+    int j;
+    /// Unit cell the second atom belongs to in a regular
+    /// supercell representation.
+    Triple_int cj;
+    /// All unit cells that the image of the second atom
+    /// belongs to in a Wigner-Seitz supercell representation.
+    std::vector<Triple_int> cjp;
+};
+
 // Enumerator representing the method of non-analytical term correction
 // - wang  : J. Phys.: Condens. Matter. 22, 202201 (2010)
 // - gonze : Phys. Rev. B 55, 10355 (1997)
@@ -234,7 +251,6 @@ private:
     /// Populate the "blocks" member variable using the data
     /// provided to the constructor.
     ///
-    /// @param[in] structure - a description of the unit cell
     /// @param[in] fcs - an object containing the IFCs
     /// for a supercell
     void copy_blocks(const Harmonic_ifcs& fcs);
@@ -260,7 +276,9 @@ private:
 
     /// Return the nonanalytic part of the dynamical matrix and
     /// its derivatives at one point using Gonze's algorithm
-    /// with Sigma equal to 0 (see Eq. 75 of 10.1103/PhysRevB.55.10355).
+    /// (see Eq. 75 of 10.1103/PhysRevB.55.10355). The sigma 
+    /// factor is computed to be moreless coherent with that of
+    /// QE and ShengBTE.
     ///
     /// @param[in] q - the q point in Cartesian coordinates
     /// @return an array containing the long-range contribution to
@@ -269,6 +287,17 @@ private:
     std::array<Eigen::ArrayXXcd, 4> build_nac_gonze(
         const Eigen::Ref<const Eigen::Vector3d>& q) const;
 
+    /// Removes the dipole-dipole interaction from the 
+    /// interatomic force constants using Gonze's method.
+    /// See 10.1103/PhysRevB.55.10355 for a better description 
+    /// of the method. To summarize, the dipole-dipole (DD) correction
+    /// is computed in the commensurate points, then the DD IFCs
+    /// are computed, and substracted from the supercell IFCs.
+    ///
+    /// @param[in] fcs - an object containing the IFCs 
+    /// @param[in] pairs - list of atomic pairs in the supercell
+    void remove_dipole_dipole(const Harmonic_ifcs& fcs,
+                              std::vector<Atom_pair>& pairs);
 
 };
 } // namespace alma
