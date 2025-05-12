@@ -207,7 +207,7 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
     for (int i = 0; i < n_commensurate; i++) {
         auto nac = this->build_nac_gonze(conmensurate_points.col(i));
         auto dyn = this->build(conmensurate_points.col(i));
-        dynamical_matrix_sr[i] = dyn[0] - nac[0].matrix();
+        dynamical_matrix_sr[i] = dyn[0];// - nac[0].matrix();
     }
 
     // Compute the correct short range force constants
@@ -229,7 +229,7 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
                                      pp[2] * this->structure.lattvec.col(2);
                 phase += std::exp(constants::imud * Rb.dot(conmensurate_points.col(i)));
             }
-            fc_ij = phase * dynamical_matrix_sr[i].block<3, 3>(3 * p.i, 3* p.j) / p.cjp.size();
+            fc_ij += phase * dynamical_matrix_sr[i].block<3, 3>(3 * p.i, 3* p.j) / p.cjp.size();
         }
 
         fc_ij /= n_commensurate;
@@ -657,10 +657,10 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
 
     // Compute the Gonze contribution (dipole-dipole( to the dynamical 
     // matrix and its derivatives.
-    if (this->nonanalytic_method == nonanalytic_treatment::gonze) {
-        auto nac = this->build_nac_gonze(q);
-        for (int i = 0; i < 4; i++) matrices[i] += nac[i].matrix();
-    }
+    //if (this->nonanalytic_method == nonanalytic_treatment::gonze) {
+    //    auto nac = this->build_nac_gonze(q);
+    //    for (int i = 0; i < 4; i++) matrices[i] += nac[i].matrix();
+    //}
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> solver(matrices[0]);
     auto omega2 = solver.eigenvalues();
