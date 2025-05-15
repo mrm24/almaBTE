@@ -335,7 +335,7 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     // The derivatives are in Ry / nm
     // Note that we obtain an angular frequency
     constexpr double Ry2toTHz2 = boost::math::pow<2>(constants::Rydberg_energy * 1.0e-12 / constants::hbar);
-    constexpr double nm3toBohr = boost::math::pow<3>(constants::a0 * 1.0e+9);
+    constexpr double nm3toBohr = boost::math::pow<3>(1e-9 / constants::a0);
 
     auto ndof = this->blocks[0].cols();
     auto natoms = ndof / 3;
