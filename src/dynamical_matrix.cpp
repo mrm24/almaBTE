@@ -22,6 +22,7 @@
 #include <utilities.hpp>
 #include <periodic_table.hpp>
 #include <dynamical_matrix.hpp>
+#include <boost/math/special_functions/pow.hpp>
 
 namespace alma {
 
@@ -162,8 +163,7 @@ void Dynamical_matrix_builder::copy_blocks(const Harmonic_ifcs& fcs) {
 
 
     // When Gonze's NAC is used one needs to substract the dipole-dipole
-    // interaction present in the supercell force constants for
-    // the conmensurate points. 
+    // interaction present in the supercell force constants.
     //
     // See Eqs. 52-54 of 10.1088/1361-648X/acd831
     //
@@ -207,7 +207,7 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
     for (int i = 0; i < n_commensurate; i++) {
         auto nac = this->build_nac_gonze(conmensurate_points.col(i));
         auto dyn = this->build(conmensurate_points.col(i));
-        dynamical_matrix_sr[i] = dyn[0];// - nac[0].matrix();
+        dynamical_matrix_sr[i] = dyn[0] - nac[0].matrix();
     }
 
     // Compute the correct short range force constants
@@ -328,217 +328,94 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_wang(
     return nruter;
 }
 
-// MIMIC QE
-// std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
-//     const Eigen::Ref<const Eigen::Vector3d>& q) const {
-//     constexpr double prefactor = constants::e * constants::e /
-//                                  constants::epsilon0 / constants::amu * 1e3;
-//
-//     auto ndof = this->blocks[0].cols();
-//     auto natoms = ndof / 3;
-//     // We need the 1st BZ q-point
-//     Eigen::Vector3d uq = this->structure.map_to_firstbz(q).col(0);
-//
-//     std::array<Eigen::ArrayXXcd, 4> nruter;
-//
-//     for (auto i = 0; i < 4; ++i)
-//         nruter[i].setZero(ndof, ndof);
-//
-//     auto Gmax  = 14.0;
-//     auto alpha = std::max({
-//             this->structure.rlattvec.col(0).squaredNorm(),
-//             this->structure.rlattvec.col(1).squaredNorm(),
-//             this->structure.rlattvec.col(2).squaredNorm()});
-//
-//     /// Get the G-mesh size, only those dimensions with periodicity are considered
-//     std::array<double,3> cell_g;
-//     cell_g[0] = this->na == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(0).norm()) + 1;
-//     cell_g[1] = this->nb == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(1).norm()) + 1;
-//     cell_g[2] = this->nc == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(2).norm()) + 1;
-//
-//     for (auto iga = -cell_g[0]; iga <= cell_g[0]; iga++)
-//         for (auto igb = -cell_g[1]; igb <= cell_g[1]; igb++)
-//             for (auto igc = -cell_g[2]; igc <= cell_g[2]; igc++) {
-//                 Eigen::Vector3d G = iga * this->structure.rlattvec.col(0) +
-//                                     igb * this->structure.rlattvec.col(1) +
-//                                     igc * this->structure.rlattvec.col(2);
-//
-//                 double GepsilonG = G.dot(this->born.epsilon * G);
-//
-//                 if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
-//                     auto decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
-//                     for (auto iatom = 0; iatom < natoms; iatom++) {
-//                         Eigen::MatrixXd zi{G.transpose() * this->born.born[iatom]};
-//                         for (auto jatom = 0; jatom < natoms; jatom++) {
-//                             Eigen::MatrixXd zj{G.transpose() * this->born.born[iatom]};
-//                             Eigen::Vector3d taudiff = this->structure.lattvec * (
-//                                 this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
-//                             Eigen::MatrixXd zij{zi.transpose() * zj};
-//                             auto phase = std::exp(constants::imud * G.dot(taudiff));
-//                             nruter[0].block<3, 3>(3 * iatom, 3 * iatom) -= (zij * phase * decay).array();
-//                         }
-//                     }
-//                 }
-//
-//                 Eigen::Vector3d Gq = G + uq;
-//                 GepsilonG = Gq.dot(this->born.epsilon * Gq);
-//                 if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
-//                     double decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
-//                     Eigen::Vector3d dGepsilonG = (this->born.epsilon + this->born.epsilon.transpose()) * Gq;
-//                     for (auto iatom = 0; iatom < natoms; iatom++) {
-//                         Eigen::MatrixXd zi{Gq.transpose() * this->born.born[iatom]};
-//                         for (auto jatom = 0; jatom < natoms; jatom++) {
-//                             Eigen::MatrixXd zj{Gq.transpose() * this->born.born[iatom]};
-//                             Eigen::Vector3d taudiff = this->structure.lattvec * (
-//                                 this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
-//                             Eigen::MatrixXd zij{zi.transpose() * zj};
-//                             auto phase = std::exp(constants::imud * Gq.dot(taudiff));
-//                             nruter[0].block<3, 3>(3 * iatom, 3 * jatom) += (zij * phase * decay).array();
-//                             for (int axis = 0; axis < 3; axis++) {
-//                                 nruter[axis+1].block<3, 3>(3 * iatom, 3 * jatom) += (decay * phase * (
-//                                     this->born.born[iatom].row(axis).transpose() * zj +
-//                                     zi.transpose() * this->born.born[jatom].row(axis) +
-//                                     zij * constants::imud * taudiff(axis) -
-//                                     zij * (dGepsilonG(axis) / alpha / 4.0 +  dGepsilonG(axis) / GepsilonG))).array();
-//                             }
-//                         }
-//                     }
-//                 }
-//     }
-//
-//     for (auto i = 0; i < 4; ++i) {
-//         nruter[i] *= prefactor / this->V;
-//         nruter[i] /= this->massmatrix;
-//     }
-//
-//     return nruter;
-// }
-
 std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
-    constexpr double prefactor = constants::e * constants::e /
-                                 constants::epsilon0 / constants::amu * 1e3;
-    
+
+    // The dipole-dipole contribution is in Rydberg units
+    // The derivatives are in Ry / nm
+    // Note that we obtain an angular frequency
+    constexpr double Ry2toTHz2 = boost::math::pow<2>(constants::Rydberg_energy * 1.0e-12 / constants::hbar);
+    constexpr double nm3toBohr = boost::math::pow<3>(constants::a0 * 1.0e+9);
+
     auto ndof = this->blocks[0].cols();
     auto natoms = ndof / 3;
-
-    // We need the 1st BZ q-point, as the term is not 
-    // per se periodical
-    Eigen::Vector3d q1stBZ = this->structure.map_to_firstbz(q).col(0);
+    // We need the 1st BZ q-point
+    Eigen::Vector3d uq = this->structure.map_to_firstbz(q).col(0);
 
     std::array<Eigen::ArrayXXcd, 4> nruter;
 
     for (auto i = 0; i < 4; ++i)
         nruter[i].setZero(ndof, ndof);
 
-    // Compute the cutoffs. TODO: is that enough?
-    constexpr int Gmax = 14;
-    auto G_cutoff = Gmax * std::cbrt(8.0  * std::pow(constants::pi,3) / this->V);
-    constexpr double exponential_cutoff = 1.0e-10;
-    double GeG = G_cutoff * G_cutoff * this->born.epsilon.trace() / 3.0;
-    auto Lambda  = std::sqrt(-0.25 * GeG * std::log(exponential_cutoff) );
-    auto Lambda2 = Lambda * Lambda;
-    
+    auto Gmax  = 14.0;
+    auto alpha = std::max({
+            this->structure.rlattvec.col(0).squaredNorm(),
+            this->structure.rlattvec.col(1).squaredNorm(),
+            this->structure.rlattvec.col(2).squaredNorm()});
+
     /// Get the G-mesh size, only those dimensions with periodicity are considered
-    int Ga = this->na == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(0).norm()) + 1;
-    int Gb = this->nb == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(1).norm()) + 1;
-    int Gc = this->nc == 1 ? 0 : int( G_cutoff / this->structure.rlattvec.col(2).norm()) + 1;
+    std::array<double,3> cell_g;
+    cell_g[0] = this->na == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(0).norm()) + 1;
+    cell_g[1] = this->nb == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(1).norm()) + 1;
+    cell_g[2] = this->nc == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(2).norm()) + 1;
 
-    // std::cout <<  "GONZE limits : "  <<  Ga << '\t' << Gb << '\t' << Gc << std::endl;
-    // std::cout <<  "GONZE G_cutoff : " <<  G_cutoff << std::endl;
-    // std::cout <<  "Lambda : " << Lambda << std::endl;
-    // std::cout <<  " L1 : " << this->structure.lattvec.col(0).transpose() << std::endl;
-    // std::cout <<  " L2 : " << this->structure.lattvec.col(1).transpose() << std::endl;
-    // std::cout <<  " L3 : " << this->structure.lattvec.col(2).transpose() << std::endl;
-    // std::cout <<  " R1 : " << this->structure.rlattvec.col(0).transpose() << std::endl;
-    // std::cout <<  " R2 : " << this->structure.rlattvec.col(1).transpose() << std::endl;
-    // std::cout <<  " R3 : " << this->structure.rlattvec.col(2).transpose() << std::endl;
-    
-    // Obtain the set of G points within the cutoff
-    std::vector<Eigen::Vector3d> Gvecs;
-    Gvecs.reserve((2*Ga+1)*(2*Gb+1)*(2*Gc+1));
-
-    for (int iga = -Ga; iga <= Ga; iga++)
-        for (int igb = -Gb; igb <= Gb; igb++)
-            for (int igc = -Gc; igc <= Gc; igc++) {
+    for (auto iga = -cell_g[0]; iga <= cell_g[0]; iga++)
+        for (auto igb = -cell_g[1]; igb <= cell_g[1]; igb++)
+            for (auto igc = -cell_g[2]; igc <= cell_g[2]; igc++) {
                 Eigen::Vector3d G = iga * this->structure.rlattvec.col(0) +
                                     igb * this->structure.rlattvec.col(1) +
                                     igc * this->structure.rlattvec.col(2);
-                if (G.norm() <= G_cutoff) Gvecs.push_back(G);
-            }
 
-    // Compute the matrix A and the A matrix at q=0
-    // The last is required to impose the translational invariance
-    //
-    // To detail, this implements the reciprocal space summation of Eq. 5
-    // in 10.1103/PhysRevB.50.13035
-    //
-    Eigen::MatrixXcd A  = Eigen::MatrixXcd::Zero(ndof,ndof);
-    Eigen::MatrixXcd A0 = Eigen::MatrixXcd::Zero(ndof,ndof);
-    for (const auto &G : Gvecs) {
-        Eigen::Vector3d K = G + q1stBZ;
-        if (!alma::almost_equal(K.norm(),0.0)) {
-            double KepsilonK = K.dot(this->born.epsilon * K);
-            Eigen::MatrixXd KK = K * K.transpose();
-            double decay = std::exp(-0.25*KepsilonK / Lambda2);
-            for (int iatom = 0; iatom < natoms; iatom++) for (int jatom = 0; jatom < natoms; jatom++) {
-                Eigen::Vector3d taudiff = this->structure.lattvec * (this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
-                std::complex<double> phase = std::exp(constants::imud * K.dot(taudiff));
-                A.block<3, 3>(3 * iatom, 3 * jatom) += phase * decay * KK / KepsilonK;
-            }
-        }
-        // The q = 0 term
-        if (!alma::almost_equal(G.norm(),0.0)) {
-            double GepsilonG = G.dot(this->born.epsilon * G);
-            Eigen::MatrixXd GG = G * G.transpose();
-            double decay = std::exp(-0.25*GepsilonG / Lambda2);
-            for (int iatom = 0; iatom < natoms; iatom++) for (int jatom = 0; jatom < natoms; jatom++) {
-                Eigen::Vector3d taudiff = this->structure.lattvec * (this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
-                std::complex<double> phase = std::exp(constants::imud * G.dot(taudiff));
-                A0.block<3, 3>(3 * iatom, 3 * jatom) += phase * decay * GG / GepsilonG;
-            }
-        }
+                double GepsilonG = G.dot(this->born.epsilon * G);
+
+                if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
+                    auto decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
+                    for (auto iatom = 0; iatom < natoms; iatom++) {
+                        Eigen::MatrixXd zi{G.transpose() * this->born.born[iatom]};
+                        for (auto jatom = 0; jatom < natoms; jatom++) {
+                            Eigen::MatrixXd zj{G.transpose() * this->born.born[iatom]};
+                            Eigen::Vector3d taudiff = this->structure.lattvec * (
+                                this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
+                            Eigen::MatrixXd zij{zi.transpose() * zj};
+                            auto phase = std::exp(constants::imud * G.dot(taudiff));
+                            nruter[0].block<3, 3>(3 * iatom, 3 * iatom) -= (zij * phase * decay).array();
+                        }
+                    }
+                }
+
+                Eigen::Vector3d Gq = G + uq;
+                GepsilonG = Gq.dot(this->born.epsilon * Gq);
+                if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
+                    double decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
+                    Eigen::Vector3d dGepsilonG = (this->born.epsilon + this->born.epsilon.transpose()) * Gq;
+                    for (auto iatom = 0; iatom < natoms; iatom++) {
+                        Eigen::MatrixXd zi{Gq.transpose() * this->born.born[iatom]};
+                        for (auto jatom = 0; jatom < natoms; jatom++) {
+                            Eigen::MatrixXd zj{Gq.transpose() * this->born.born[iatom]};
+                            Eigen::Vector3d taudiff = this->structure.lattvec * (
+                                this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
+                            Eigen::MatrixXd zij{zi.transpose() * zj};
+                            auto phase = std::exp(constants::imud * Gq.dot(taudiff));
+                            nruter[0].block<3, 3>(3 * iatom, 3 * jatom) += (zij * phase * decay).array();
+                            for (int axis = 0; axis < 3; axis++) {
+                                nruter[axis+1].block<3, 3>(3 * iatom, 3 * jatom) += (decay * phase * (
+                                    this->born.born[iatom].row(axis).transpose() * zj +
+                                    zi.transpose() * this->born.born[jatom].row(axis) +
+                                    zij * constants::imud * taudiff(axis) -
+                                    zij * (dGepsilonG(axis) / alpha / 4.0 +  dGepsilonG(axis) / GepsilonG))).array();
+                            }
+                        }
+                    }
+                }
     }
 
-    // Multiply A with the Born charges
-    Eigen::MatrixXcd hatA  = Eigen::MatrixXcd::Zero(ndof,ndof);
-    Eigen::MatrixXcd hatA0 = Eigen::MatrixXcd::Zero(ndof,ndof);
-    for (int iatom = 0; iatom < natoms; iatom++) for (int jatom = 0; jatom < natoms; jatom++) {
-        const Eigen::MatrixXd& Zi = this->born.born[iatom];
-        const Eigen::MatrixXd& Zj = this->born.born[jatom];
-
-        Eigen::MatrixXcd A_block = A.block<3,3>(3 * iatom, 3 * jatom);
-        hatA.block<3,3>(3 * iatom, 3 * jatom) += Zi * A_block * Zj.transpose();
-
-        Eigen::MatrixXcd A0_block = A0.block<3,3>(3 * iatom, 3 * jatom);
-        hatA0.block<3,3>(3 * iatom, 3 * jatom) += Zi * A0_block * Zj.transpose();
-
-    }
-
-    // Include mass factor
-    hatA  = (hatA.array()  / this->massmatrix).matrix();
-    hatA0 = (hatA0.array() / this->massmatrix).matrix();
-
-    Eigen::MatrixXcd Add(hatA);
-
-    // Impose the Translational invariance
-    for (int iatom = 0; iatom < natoms; iatom++) for (int katom = 0; katom < natoms; katom++) {
-        Add.block<3,3>(3 * iatom, 3 * iatom) -= hatA0.block<3,3>(3 * iatom, 3 * katom) *
-            std::sqrt(this->structure.get_mass(katom) / this->structure.get_mass(iatom));
-    }
-
-    nruter[0] = Add;
-
-    // TODO: derivatives
-
-    // Correct units
     for (auto i = 0; i < 4; ++i) {
-        nruter[i] *= prefactor / this->V;
+        nruter[i] *= 8.0 * constants::pi * Ry2toTHz2 / (nm3toBohr * this->V);
+        nruter[i] /= this->massmatrix;
     }
-    
+
     return nruter;
 }
-
 
 /// Pairwise summation of a vector of matrices or arrays. This reduces the
 /// expected error versus a standard summation.
@@ -655,12 +532,15 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     // Compute the Short-range + Wang_NAC dynamical matrix.
     auto matrices = this->build(q);
 
-    // Compute the Gonze contribution (dipole-dipole( to the dynamical 
-    // matrix and its derivatives.
-    //if (this->nonanalytic_method == nonanalytic_treatment::gonze) {
-    //    auto nac = this->build_nac_gonze(q);
-    //    for (int i = 0; i < 4; i++) matrices[i] += nac[i].matrix();
-    //}
+    // Compute the Gonze contribution (dipole-dipole) to the dynamical
+    // matrix and its derivatives. Note that oposed to the Wang the
+    // Gonze contribution to the Dynamical matrix needs to be added
+    // to all q-points.
+    if (this->nonanalytic_method == nonanalytic_treatment::gonze &&
+        this->nonanalytic) {
+        auto nac = this->build_nac_gonze(q);
+        for (int i = 0; i < 4; i++) matrices[i] += nac[i].matrix();
+    }
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> solver(matrices[0]);
     auto omega2 = solver.eigenvalues();
@@ -755,12 +635,12 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
                         }
                         else{
                             wigner_v(axis,istate+ndof*jstate) /= omega(istate) + omega(jstate);
-			    /// Now account by the fact that in almaBTE we are using the dynamical matrix convention
+                            /// Now account by the fact that in almaBTE we are using the dynamical matrix convention
                             /// that does not have the atomic positions in the phase. See Eq. 50 in 10.1103/PhysRevX.12.041011.
                             auto phase_correction = -alma::constants::imud * ( omega(jstate) - omega(istate) ) *
                                                      vectors_left_smooth.col(i).dot(
                                                      (tau.transpose().col(axis).array() * vectors_right_smooth.col(j).array()).matrix());
-			    wigner_v(axis,istate+ndof*jstate) += phase_correction; 
+                                                     wigner_v(axis,istate+ndof*jstate) += phase_correction;
                         }
                     }
             }

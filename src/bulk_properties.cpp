@@ -18,6 +18,7 @@
 #include <bulk_properties.hpp>
 #include <analytic1d.hpp>
 #include <boost/math/special_functions/pow.hpp>
+#include <processes.hpp>
 #include <iostream>
 
 namespace alma {
@@ -147,9 +148,9 @@ Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
 
     /// Check that the imaginary part is small
     if (!alma::almost_equal(nruter.imag().maxCoeff(),0.)){
-	std::cout << "Imaginary terms of the coherence contribution are not null." << std::endl;
-	std::cout << "MaxCoeff value (real) : " << '\t' << nruter.real().array().abs().maxCoeff() << std::endl;
-	std::cout << "MaxCoeff value (imag) : " << '\t' << nruter.imag().array().abs().maxCoeff() << std::endl;
+        throw value_error(std::string("Imaginary terms of the coherence contribution are not null.\n") + 
+                        std::string("MaxCoeff value (real) : ")   + std::to_string(nruter.real().array().abs().maxCoeff()) + 
+                        std::string("\nMaxCoeff value (imag) : ") + std::to_string(nruter.imag().array().abs().maxCoeff()));
     }
 
     // Return the real part
@@ -243,4 +244,48 @@ double calc_kappa_1d(const alma::Crystal_structure& poscar,
     }
     return (1e21 * alma::constants::kB / poscar.V / grid.nqpoints) * nruter;
 }
+
+double calc_phase_space(const alma::Crystal_structure& poscar,
+                        const alma::Gamma_grid& grid,
+                        const double T,
+                        std::vector<alma::Threeph_process>& processes,
+                        Eigen::Ref<Eigen::MatrixXd> P3plus,
+                        Eigen::Ref<Eigen::MatrixXd> P3minus) {
+
+    const auto nqpoints = grid.nqpoints;
+    const auto nmodes = grid.get_spectrum_at_q(0).omega.size();
+    const double VBZ = std::fabs(poscar.rlattvec.determinant());
+    const double factor = 2.0 * boost::math::pow<4>(2.0 * constants::pi) / 
+                 (3.0 * nqpoints * boost::math::pow<2>(VBZ) * boost::math::pow<3>(nmodes));
+
+    double nruter = 0.0;
+
+    P3plus.resize(nmodes,nqpoints);
+    P3plus.setZero();
+    P3minus.resize(nmodes,nqpoints);
+    P3minus.setZero();
+
+    // Compute the contribution with the appropriate weight
+    std::for_each(processes.begin(), processes.end(), [&](alma::Threeph_process &process){
+        auto wp3   = process.compute_weighted_gaussian(grid, T);
+        auto iq    = process.q[0];
+        auto alpha = process.alpha[0]; 
+        auto equivalent_qpoints = grid.equivalent_qpoints(iq);
+        auto symmetry_weight = equivalent_qpoints.size();
+        for (const auto& equivalent : equivalent_qpoints) {
+            if (process.type == alma::threeph_type::absorption) {
+                P3plus(alpha,equivalent) +=  factor * wp3;
+            }
+            else {
+                P3minus(alpha,equivalent) += factor * wp3;
+            }
+        }
+        nruter += factor * symmetry_weight * wp3;
+
+    });
+
+    return nruter;
+
+}
+
 } // namespace alma

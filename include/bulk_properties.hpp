@@ -111,4 +111,21 @@ double calc_kappa_1d(const alma::Crystal_structure& poscar,
                      const Eigen::Ref<const Eigen::ArrayXXd>& w,
                      double T,
                      const Eigen::Ref<const Eigen::Vector3d>& direction);
+
+/// Obtain the phase space (normalized by the phonon bands)
+///
+/// @param[in] poscar - description of the unit cell
+/// @param[in] grid - phonon spectrum on a regular q-point grid
+/// @param[in] T - temperature in K
+/// @param[in] processes - three-phonon procesess
+/// @param[out] P3plus   - contains the mode-resolve absorption phase space in nm**6 / THz**4
+/// @param[out] P3minus  - contains the mode-resolve emission phase space in nm**6 / THz**4
+/// @return the 3 phonon phase space in nm**6 / THz**4
+double calc_phase_space(const alma::Crystal_structure& poscar,
+                        const alma::Gamma_grid& grid,
+                        const double T,
+                        std::vector<alma::Threeph_process>& processes,
+                        Eigen::Ref<Eigen::MatrixXd> P3plus,
+                        Eigen::Ref<Eigen::MatrixXd> P3minus);
+
 } // namespace alma

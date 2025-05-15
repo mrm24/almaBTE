@@ -28,6 +28,8 @@
 #include <bulk_hdf5.hpp>
 #include <isotopic_scattering.hpp>
 #include <io_utils.hpp>
+#include <bulk_hdf5.hpp>
+#include <bulk_properties.hpp>
 
 int main(int argc, char** argv) {
     boost::mpi::environment env;
@@ -98,12 +100,16 @@ int main(int argc, char** argv) {
         alma::calc_w0_twoph(*poscar, *grid, twoph_processes, world));
     Eigen::ArrayXXd w0(w3 + w2);
 
+    Eigen::MatrixXd P3plus, P3minus;
+    double P3total = alma::calc_phase_space(*poscar, *grid, Tambient,
+                            *processes, P3plus, P3minus);
+
     // Create output writer
     std::cout << "Writing data to " << output_file << std::endl;
     std::ofstream filewriter;
     filewriter.open(output_file);
     filewriter << "nq,nbranch,qa[-],qb[-],qc[-],omega[rad/s],C[J/"
-                  "m^3-K],tau[s],vx[m/s],vy[m/s],vz[m/s]"
+                  "m^3-K],tau[s],vx[m/s],vy[m/s],vz[m/s],P3minus[nm^6/THz^4],P3plus[nm^6/THz^4]"
                << std::endl;
 
     int Nq = grid->nqpoints;
@@ -145,12 +151,14 @@ int main(int argc, char** argv) {
                        << qc << ",";
             filewriter << omega << "," << C << "," << tau0 << ",";
             filewriter << vg_vector(0) << "," << vg_vector(1) << ","
-                       << vg_vector(2) << std::endl;
+                       << vg_vector(2) << "," << P3minus(nbranch,nq) << "," 
+                       << P3plus(nbranch,nq) << std::endl;
         }
     }
 
     filewriter.close();
 
+    std::cout << "-Total phase space : " << P3total << " [nm^6 / THz^4]" << std::endl;
     std::cout << std::endl << "[DONE.]" << std::endl;
 
     return 0;
