@@ -157,4 +157,32 @@ Scattering_subgroup load_scattering_subgroup(
 void write_scattering_subgroup(const char* filename,
                                const Scattering_subgroup& group,
                                const boost::mpi::communicator& comm);
+
+/// Add a subgroup to the "/ifcs" group of the HDF5 file.
+///
+/// The existence of the group is not checked.
+/// @param[in] filename - path to the HDF5 file
+/// @param[in] harmonic_ifcs - harmonic IFCs
+/// @param[in] anharmonic_ifcs - anharmonic IFCs
+/// @param[in] comm - MPI communicator used to coordinate with all
+/// other processes
+void write_ifcs_subgroup(const char* filename,
+                         const Harmonic_ifcs& harmonic_ifcs,
+                         const std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
+                         const boost::mpi::communicator& comm);
+
+/// Read "/ifcs" group of the HDF5 file.
+///
+/// The existence of the group is not checked.
+/// @param[in] filename - path to the HDF5 file
+/// @param[out] harmonic_ifcs - harmonic IFCs
+/// @param[out] anharmonic_ifcs - anharmonic IFCs
+/// @param[in] comm - MPI communicator used to coordinate with all
+/// other processes
+void load_ifcs_subgroup(const char* filename,
+                         Harmonic_ifcs& harmonic_ifcs,
+                         std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
+                         const boost::mpi::communicator& comm);
+
+
 } // namespace alma

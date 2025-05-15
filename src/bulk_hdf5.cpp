@@ -120,6 +120,7 @@ void create_groups(H5File& file) {
     file.createGroup("/qpoint_grid");
     file.createGroup("/threeph_processes");
     file.createGroup("/scattering");
+    file.createGroup("/ifcs");
 }
 
 
@@ -1053,4 +1054,301 @@ void write_scattering_subgroup(const char* filename,
     }
     comm.barrier();
 }
+
+void write_ifcs_subgroup(const char* filename,
+                         Harmonic_ifcs& harmonic_ifcs,
+                         const std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
+                         const boost::mpi::communicator& comm) {
+    
+    auto my_id = comm.rank();
+
+    // Processes other than ID 0 do not do anything other than wait.
+    if (my_id == 0) {
+        std::unique_ptr<H5File> h5f;
+        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDWR);
+        // Check if the "/ifcs" group exists,
+        // create it otherwise.
+        Group ifcs;
+        try {
+            ifcs = h5f->openGroup("/ifcs");
+        }
+        catch (GroupIException e) {
+            ifcs = h5f->createGroup("/ifcs");
+        }
+
+        /// Obtain the number of harmonic IFCs
+        std::size_t n_harmonic_ifcs = harmonic_ifcs.ifcs.size();
+        std::size_t ndof = harmonic_ifcs.ifcs[0].rows();
+
+        /// Write the supercell used to compute the harmonic IFCs
+        int n_supercell[] = {harmonic_ifcs.na, harmonic_ifcs.nb, harmonic_ifcs.nc};
+        hsize_t nsupercell_dims[] = {3};
+        DataSpace nsupercell_dspace(1, nsupercell_dims);
+        DataSet nsupercell_dset = h5f->createDataSet(
+            "/ifcs/harmonic/supercell", PredType::STD_I32LE, nsupercell_dspace);
+        nsupercell_dspace.selectAll();
+        nsupercell_dset.write(n_supercell, PredType::NATIVE_INT, nsupercell_dspace, nsupercell_dspace);
+
+        hsize_t positions_dims[] = {n_harmonic_ifcs, 3};
+        DataSpace positions_dspace(2, positions_dims);
+        DataSet positions_dset = h5f->createDataSet(
+            "/ifcs/harmonic/Rj", PredType::NATIVE_INT, positions_dspace);
+
+        hsize_t hifcs_dims[] = {n_harmonic_ifcs, ndof*ndof};
+        DataSpace hifcs_dspace(2, hifcs_dims);
+        DataSet hifcs_dset = h5f->createDataSet(
+            "/ifcs/harmonic/force_constants", PredType::IEEE_F64LE, hifcs_dspace);
+        
+        hsize_t positions_pos[] = {0, 0};
+        hsize_t positions_count[] = {1, 3};
+        hsize_t positions_dims_m[] = {3};
+        DataSpace positions_dspace_m(1, positions_dims_m);
+
+        hsize_t hifcs_pos[] = {0, 0};
+        hsize_t hifcs_count[] = {1, ndof*ndof};
+        hsize_t hifcs_dims_m[] = {ndof*ndof};
+        DataSpace hifcs_dspace_m(1, hifcs_dims_m);
+
+        // Write the IFCs
+        for (std::size_t i = 0; i < n_harmonic_ifcs; i++) {
+            ++positions_pos[0];
+            positions_dspace.selectHyperslab(H5S_SELECT_SET, positions_count, positions_pos);
+            positions_dset.write(harmonic_ifcs.pos[i].data(),
+                                 PredType::NATIVE_INT,
+                                 positions_dspace_m,
+                                 positions_dspace);
+            ++hifcs_pos[0];
+            hifcs_dspace.selectHyperslab(H5S_SELECT_SET, hifcs_count, hifcs_pos);
+            hifcs_dset.write(harmonic_ifcs.ifcs[i].data(),
+                             PredType::IEEE_F64LE,
+                             hifcs_dspace_m,
+                             hifcs_dspace);
+        }
+
+        /// Obtain the number of harmonic IFCs
+        std::size_t n_anharmonic_ifcs = anharmonic_ifcs.size();
+
+        hsize_t Rk_dims[] = {n_anharmonic_ifcs, 3};
+        DataSpace Rk_dspace(2, Rk_dims);
+        DataSet Rk_dset = h5f->createDataSet(
+            "/ifcs/anharmonic/Rk", PredType::IEEE_F64LE, Rk_dspace);
+        hsize_t Rj_dims[] = {n_anharmonic_ifcs, 3};
+        DataSpace Rj_dspace(2, Rj_dims);
+        DataSet Rj_dset = h5f->createDataSet(
+            "/ifcs/anharmonic/Rj", PredType::IEEE_F64LE, Rj_dspace);
+        hsize_t atoms_dims[] = {n_anharmonic_ifcs, 3};
+        DataSpace atoms_dspace(2, atoms_dims);
+        DataSet atoms_dset = h5f->createDataSet(
+            "/ifcs/anharmonic/atoms", PredType::NATIVE_SIZE_T, atoms_dspace);
+
+        hsize_t aifcs_dims[] = {n_anharmonic_ifcs, 27};
+        DataSpace aifcs_dspace(2, aifcs_dims);
+        DataSet aifcs_dset = h5f->createDataSet(
+            "/ifcs/anharmonic/force_constants", PredType::IEEE_F64LE, aifcs_dspace);
+
+
+        hsize_t Rk_pos[] = {0, 0};
+        hsize_t Rk_count[] = {1, 3};
+        hsize_t Rk_dims_m[] = {3};
+        DataSpace Rk_dspace_m(1, Rk_dims_m);
+        hsize_t Rj_pos[] = {0, 0};
+        hsize_t Rj_count[] = {1, 3};
+        hsize_t Rj_dims_m[] = {3};
+        DataSpace Rj_dspace_m(1, Rj_dims_m);
+        hsize_t atoms_pos[] = {0, 0};
+        hsize_t atoms_count[] = {1, 3};
+        hsize_t atoms_dims_m[] = {3};
+        DataSpace atoms_dspace_m(1, atoms_dims_m);
+
+        hsize_t aifcs_pos[] = {0, 0};
+        hsize_t aifcs_count[] = {1, 27};
+        hsize_t aifcs_dims_m[] = {27};
+        DataSpace aifcs_dspace_m(1, aifcs_dims_m);
+
+
+        for (std::size_t i = 0; i < n_anharmonic_ifcs; i++) {
+            ++Rk_pos[0];
+            Rk_dspace.selectHyperslab(H5S_SELECT_SET, Rk_count, Rk_pos);
+            Rk_dset.write(anharmonic_ifcs[i].rk.data(),
+                          PredType::IEEE_F64LE,
+                          Rk_dspace_m,
+                          Rk_dspace);
+            ++Rj_pos[0];
+            Rj_dspace.selectHyperslab(H5S_SELECT_SET, Rj_count, Rj_pos);
+            Rj_dset.write(anharmonic_ifcs[i].rj.data(),
+                          PredType::IEEE_F64LE,
+                          Rj_dspace_m,
+                          Rj_dspace);
+
+            ++atoms_pos[0];
+            atoms_dspace.selectHyperslab(H5S_SELECT_SET, atoms_count, atoms_pos);
+            std::array<std::size_t,3> atoms_ = {anharmonic_ifcs[i].i, anharmonic_ifcs[i].j, anharmonic_ifcs[i].k};
+            atoms_dset.write(atoms_.data(),
+                             PredType::NATIVE_SIZE_T,
+                             atoms_dspace_m,
+                             atoms_dspace);
+
+            ++aifcs_pos[0];
+            aifcs_dspace.selectHyperslab(H5S_SELECT_SET, aifcs_count, aifcs_pos);
+            aifcs_dset.write(&(anharmonic_ifcs[i].ifc(0,0,0)),
+                             PredType::IEEE_F64LE,
+                             aifcs_dspace_m,
+                             aifcs_dspace);
+        }
+
+    }
+    comm.barrier();
+
+}
+
+void load_ifcs_subgroup(const char* filename,
+                         Harmonic_ifcs& harmonic_ifcs,
+                         std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
+                         const boost::mpi::communicator& comm) {
+    
+    auto my_id = comm.rank();
+
+    // Processes other than ID 0 do not do anything other than wait.
+    if (my_id == 0) {
+        std::unique_ptr<H5File> h5f;
+        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDWR);
+
+        
+        DataSet nsupercell_dset = h5f->openDataSet("/ifcs/harmonic/supercell");
+        DataSpace nsupercell_dspace = nsupercell_dset.getSpace();
+        DataSet positions_dset = h5f->openDataSet("/ifcs/harmonic/Rj");
+        DataSpace positions_dspace = positions_dset.getSpace();
+        DataSet hifcs_dset = h5f->openDataSet("/ifcs/harmonic/force_constants");
+        DataSpace hifcs_dspace = hifcs_dset.getSpace();
+
+        /// Get the number of harmonic components
+        hsize_t hsizes[2];
+        hifcs_dspace.getSimpleExtentDims(hsizes, nullptr);
+        std::size_t nharm = hsizes[0];
+        std::size_t ndof  = std::sqrt(hsizes[1]);
+        
+        /// Get the number of supercells
+        int n_supercell[3];
+        nsupercell_dspace.selectAll();
+        nsupercell_dset.read(n_supercell, PredType::NATIVE_INT, nsupercell_dspace, nsupercell_dspace);
+
+
+        std::vector<Eigen::MatrixXd> ifcs_(nharm, Eigen::MatrixXd::Zero(ndof,ndof));
+        std::vector<Triple_int> pos_(nharm);
+
+        hsize_t positions_pos[] = {0, 0};
+        hsize_t positions_count[] = {1, 3};
+        hsize_t positions_dims_m[] = {3};
+        DataSpace positions_dspace_m(1, positions_dims_m);
+
+        hsize_t hifcs_pos[] = {0, 0};
+        hsize_t hifcs_count[] = {1, ndof*ndof};
+        hsize_t hifcs_dims_m[] = {ndof*ndof};
+        DataSpace hifcs_dspace_m(1, hifcs_dims_m);
+
+        // Read the IFCs
+        for (std::size_t i = 0; i < nharm; i++) {
+            ++positions_pos[0];
+            positions_dspace.selectHyperslab(H5S_SELECT_SET, positions_count, positions_pos);
+            positions_dset.read(pos_[i].data(),
+                                 PredType::NATIVE_INT,
+                                 positions_dspace_m,
+                                 positions_dspace);
+            ++hifcs_pos[0];
+            hifcs_dspace.selectHyperslab(H5S_SELECT_SET, hifcs_count, hifcs_pos);
+            hifcs_dset.read(ifcs_[i].data(),
+                             PredType::IEEE_F64LE,
+                             hifcs_dspace_m,
+                             hifcs_dspace);
+        }
+
+        harmonic_ifcs.na = n_supercell[0];
+        harmonic_ifcs.nb = n_supercell[1];
+        harmonic_ifcs.nc = n_supercell[2];
+        harmonic_ifcs.pos.swap(pos_);
+        harmonic_ifcs.ifcs.swap(ifcs_);
+
+        /// Anharmonic ifcs
+        DataSet Rj_dset = h5f->openDataSet("/ifcs/anharmonic/Rj");
+        DataSpace Rj_dspace = Rj_dset.getSpace();
+        DataSet Rk_dset = h5f->openDataSet("/ifcs/anharmonic/Rk");
+        DataSpace Rk_dspace = Rk_dset.getSpace();
+        DataSet atoms_dset = h5f->openDataSet("/ifcs/anharmonic/atoms");
+        DataSpace atoms_dspace = atoms_dset.getSpace();
+        DataSet aifcs_dset = h5f->openDataSet("/ifcs/harmonic/force_constants");
+        DataSpace aifcs_dspace = aifcs_dset.getSpace();
+
+        /// Get the number of anharmonic components
+        hsize_t asizes[2];
+        Rj_dspace.getSimpleExtentDims(asizes, nullptr);
+        std::size_t nanharm = hsizes[0];
+
+        anharmonic_ifcs.clear();
+        anharmonic_ifcs.reserve(nanharm);
+
+        hsize_t Rk_pos[] = {0, 0};
+        hsize_t Rk_count[] = {1, 3};
+        hsize_t Rk_dims_m[] = {3};
+        DataSpace Rk_dspace_m(1, Rk_dims_m);
+        hsize_t Rj_pos[] = {0, 0};
+        hsize_t Rj_count[] = {1, 3};
+        hsize_t Rj_dims_m[] = {3};
+        DataSpace Rj_dspace_m(1, Rj_dims_m);
+        hsize_t atoms_pos[] = {0, 0};
+        hsize_t atoms_count[] = {1, 3};
+        hsize_t atoms_dims_m[] = {3};
+        DataSpace atoms_dspace_m(1, atoms_dims_m);
+
+        hsize_t aifcs_pos[] = {0, 0};
+        hsize_t aifcs_count[] = {1, 27};
+        hsize_t aifcs_dims_m[] = {27};
+        DataSpace aifcs_dspace_m(1, aifcs_dims_m);
+
+
+
+        for (std::size_t i = 0; i < nanharm; i++) {
+
+            Eigen::Vector3d Rk, Rj;
+
+            ++Rk_pos[0];
+            Rk_dspace.selectHyperslab(H5S_SELECT_SET, Rk_count, Rk_pos);
+            Rk_dset.read(Rk.data(),
+                          PredType::IEEE_F64LE,
+                          Rk_dspace_m,
+                          Rk_dspace);
+            ++Rj_pos[0];
+            Rj_dspace.selectHyperslab(H5S_SELECT_SET, Rj_count, Rj_pos);
+            Rj_dset.read(Rj.data(),
+                          PredType::IEEE_F64LE,
+                          Rj_dspace_m,
+                          Rj_dspace);
+
+            ++atoms_pos[0];
+            atoms_dspace.selectHyperslab(H5S_SELECT_SET, atoms_count, atoms_pos);
+            std::array<std::size_t,3> atoms_;
+            atoms_dset.read(atoms_.data(),
+                             PredType::NATIVE_SIZE_T,
+                             atoms_dspace_m,
+                             atoms_dspace);
+
+            ++aifcs_pos[0];
+            std::array<double,27> ifcs_;
+            aifcs_dspace.selectHyperslab(H5S_SELECT_SET, aifcs_count, aifcs_pos);
+            aifcs_dset.read(ifcs_.data(),
+                            PredType::IEEE_F64LE,
+                            aifcs_dspace_m,
+                            aifcs_dspace);
+
+            anharmonic_ifcs.emplace_back(Rj,Rk,atoms_[0],atoms_[1],atoms_[2]);
+            anharmonic_ifcs[i].swap_block(ifcs_);
+        }
+
+    }
+    
+    boost::mpi::broadcast(comm, harmonic_ifcs, 0);
+    boost::mpi::broadcast(comm, anharmonic_ifcs, 0);
+
+    comm.barrier();
+}
+
 } // namespace alma

@@ -536,5 +536,41 @@ template <class Archive, typename S>
 void serialize(Archive& ar, Eigen::Triplet<S>& t, const unsigned int version) {
     split_free(ar, t, version);
 }
+
+/// Eigen Matrix serialization:
+
+template <class Archive>
+void serialize(Archive& ar,
+               Eigen::Matrix<double, -1, 1>& t,
+               const unsigned int version) {
+    Eigen::MatrixXd::Index rows = t.rows();
+    Eigen::MatrixXd::Index cols = t.cols();
+
+    ar& rows;
+    ar& cols;
+    // Because our matrix is dynamic we need to ensure resizing
+    if (rows * cols != t.size())
+        t.resize(rows, cols);
+
+    ar& boost::serialization::make_array(t.data(), rows * cols);
+}
+
+template <class Archive>
+void serialize(Archive& ar,
+               Eigen::Matrix<double, -1, -1>& t,
+               const unsigned int version) {
+    Eigen::MatrixXd::Index rows = t.rows();
+    Eigen::MatrixXd::Index cols = t.cols();
+
+    ar& rows;
+    ar& cols;
+    // Because our matrix is dynamic we need to ensure resizing
+    if (rows * cols != t.size())
+        t.resize(rows, cols);
+
+    ar& boost::serialization::make_array(t.data(), rows * cols);
+}
+
+
 } // namespace serialization
 } // namespace boost
