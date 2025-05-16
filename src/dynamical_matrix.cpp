@@ -334,8 +334,11 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     // The dipole-dipole contribution is in Rydberg units
     // The derivatives are in Ry / nm
     // Note that we obtain an angular frequency
-    constexpr double Ry2toTHz2 = boost::math::pow<2>(constants::Rydberg_energy * 1.0e-12 / constants::hbar);
-    constexpr double nm3toBohr = boost::math::pow<3>(1e-9 / constants::a0);
+    //constexpr double Ry2toTHz2 = boost::math::pow<2>(constants::Rydberg_energy * 1.0e-12 / constants::hbar);
+    //constexpr double nm3toBohr = boost::math::pow<3>(1e-9 / constants::a0);
+    constexpr double prefactor = constants::e * constants::e /
+                                 constants::epsilon0 / constants::amu * 1e3;
+
 
     auto ndof = this->blocks[0].cols();
     auto natoms = ndof / 3;
@@ -373,7 +376,7 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
                     for (auto iatom = 0; iatom < natoms; iatom++) {
                         Eigen::MatrixXd zi{G.transpose() * this->born.born[iatom]};
                         for (auto jatom = 0; jatom < natoms; jatom++) {
-                            Eigen::MatrixXd zj{G.transpose() * this->born.born[iatom]};
+                            Eigen::MatrixXd zj{G.transpose() * this->born.born[jatom]};
                             Eigen::Vector3d taudiff = this->structure.lattvec * (
                                 this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
                             Eigen::MatrixXd zij{zi.transpose() * zj};
@@ -391,7 +394,7 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
                     for (auto iatom = 0; iatom < natoms; iatom++) {
                         Eigen::MatrixXd zi{Gq.transpose() * this->born.born[iatom]};
                         for (auto jatom = 0; jatom < natoms; jatom++) {
-                            Eigen::MatrixXd zj{Gq.transpose() * this->born.born[iatom]};
+                            Eigen::MatrixXd zj{Gq.transpose() * this->born.born[jatom]};
                             Eigen::Vector3d taudiff = this->structure.lattvec * (
                                 this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
                             Eigen::MatrixXd zij{zi.transpose() * zj};
@@ -410,7 +413,7 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     }
 
     for (auto i = 0; i < 4; ++i) {
-        nruter[i] *= 8.0 * constants::pi * Ry2toTHz2 / (nm3toBohr * this->V);
+        nruter[i] *= prefactor / this->V;
         nruter[i] /= this->massmatrix;
     }
 
