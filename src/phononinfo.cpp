@@ -34,6 +34,8 @@
 int main(int argc, char** argv) {
     boost::mpi::environment env;
     boost::mpi::communicator world;
+    auto rank = world.rank();
+    constexpr decltype(rank) master = 0;
 
     // Reference temperature at which to compute
     // heat capacities and scattering rates.
@@ -63,11 +65,13 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::cout << "***********************************" << std::endl;
-    std::cout << "This is ALMA/phononinfo version " << ALMA_VERSION_MAJOR << "."
-              << ALMA_VERSION_MINOR << std::endl;
-    std::cout << "***********************************" << std::endl;
-
+    if (rank == master) {
+        std::cout << "***********************************" << std::endl;
+        std::cout << "This is ALMA/phononinfo version " << ALMA_VERSION_MAJOR << "."
+                << ALMA_VERSION_MINOR << std::endl;
+        std::cout << "***********************************" << std::endl;
+        std::cout << "-Temperature : " << Tambient << " [K]" << std::endl;
+    }
     // Create name of outputfile
     boost::filesystem::path hdf5_path{h5filename};
     std::stringstream output_file_builder;
@@ -76,7 +80,7 @@ int main(int argc, char** argv) {
     std::string output_file = output_file_builder.str();
 
     // Obtain phonon data
-    std::cout << "Reading " << h5filename << std::endl;
+    if (rank == master) std::cout << "Reading " << h5filename << std::endl;
 
     if (!(boost::filesystem::exists(hdf5_path))) {
         std::cout << "ERROR:" << std::endl;
@@ -92,7 +96,7 @@ int main(int argc, char** argv) {
     auto processes = std::move(std::get<4>(hdf5_data));
 
     // RTA scattering rates at the specified temperature.
-    std::cout << "Calculating scattering rates" << std::endl;
+    if (rank == master) std::cout << "Calculating scattering rates" << std::endl;
     Eigen::ArrayXXd w3(
         alma::calc_w0_threeph(*grid, *processes, Tambient, world));
     auto twoph_processes = alma::find_allowed_twoph(*grid, world);
@@ -100,66 +104,81 @@ int main(int argc, char** argv) {
         alma::calc_w0_twoph(*poscar, *grid, twoph_processes, world));
     Eigen::ArrayXXd w0(w3 + w2);
 
-    Eigen::MatrixXd P3plus, P3minus;
-    double P3total = alma::calc_phase_space(*poscar, *grid, Tambient,
-                            *processes, P3plus, P3minus);
+    // Phase space and weighted phase space at the specified temperature
+    if (rank == master) std::cout << "Calculating phase space and weighted phase space" << std::endl;
+    Eigen::MatrixXd P3plus, P3minus, WP3plus, WP3minus;
+    auto phase_space = alma::calc_phase_space(*poscar, *grid, Tambient,
+                            *processes, P3plus, P3minus, WP3plus, WP3minus, world);
 
-    // Create output writer
-    std::cout << "Writing data to " << output_file << std::endl;
-    std::ofstream filewriter;
-    filewriter.open(output_file);
-    filewriter << "nq,nbranch,qa[-],qb[-],qc[-],omega[rad/s],C[J/"
-                  "m^3-K],tau[s],vx[m/s],vy[m/s],vz[m/s],P3minus[nm^6/THz^4],P3plus[nm^6/THz^4]"
-               << std::endl;
 
-    int Nq = grid->nqpoints;
-    int Nbranches = grid->get_spectrum_at_q(0).omega.size();
+    if (rank == master) std::cout << "Calculation the small grain thermal conductivity" << std::endl;
+    auto kappa_sg = calc_kappa_sg(*poscar, *grid, *syms, Tambient);
 
-    const double prefactor =
-        1e27 * alma::constants::kB / grid->nqpoints / poscar->V;
+    /// Master process prints the results
+    if (world.rank() == 0) {
+        // Create output writer
+        std::cout << "Writing data to " << output_file << std::endl;
+        std::ofstream filewriter;
+        filewriter.open(output_file);
+        filewriter << "nq,nbranch,qa[-],qb[-],qc[-],omega[rad/s],C[J/"
+                    "m^3-K],tau[s],vx[m/s],vy[m/s],vz[m/s],"
+                    "P3minus[ps/rad],P3plus[ps/rad],"
+                    "WP3minus[ps^{4}/rad^{4}],WP3plus[ps^{4}/rad^{4}]"
+                << std::endl;
 
-    for (int nq = 0; nq < Nq; ++nq) {
-        auto sp = grid->get_spectrum_at_q(nq);
+        int Nq = grid->nqpoints;
+        int Nbranches = grid->get_spectrum_at_q(0).omega.size();
 
-        std::array<int, 3> qcoords = grid->one_to_three(nq);
-        double qa =
-            static_cast<double>(qcoords[0]) / static_cast<double>(grid->na);
-        double qb =
-            static_cast<double>(qcoords[1]) / static_cast<double>(grid->nb);
-        double qc =
-            static_cast<double>(qcoords[2]) / static_cast<double>(grid->nc);
+        const double prefactor =
+            1e27 * alma::constants::kB / grid->nqpoints / poscar->V;
 
-        for (int nbranch = 0; nbranch < Nbranches; nbranch++) {
-            // scattering rate
-            double my_w0 = w0(nbranch, nq);
+        for (int nq = 0; nq < Nq; ++nq) {
+            auto sp = grid->get_spectrum_at_q(nq);
 
-            // relaxation time [seconds]
-            double tau0 = (my_w0 == 0.) ? 0. : (1e-12 / my_w0);
+            std::array<int, 3> qcoords = grid->one_to_three(nq);
+            double qa =
+                static_cast<double>(qcoords[0]) / static_cast<double>(grid->na);
+            double qb =
+                static_cast<double>(qcoords[1]) / static_cast<double>(grid->nb);
+            double qc =
+                static_cast<double>(qcoords[2]) / static_cast<double>(grid->nc);
 
-            // angular frequency [rad/s]
-            double omega = 1e12 * sp.omega[nbranch];
+            for (int nbranch = 0; nbranch < Nbranches; nbranch++) {
+                // scattering rate
+                double my_w0 = w0(nbranch, nq);
 
-            // volumetric heat capacity [J/m^3-K]
-            double C = prefactor *
-                       alma::bose_einstein_kernel(sp.omega[nbranch], Tambient);
+                // relaxation time [seconds]
+                double tau0 = (my_w0 == 0.) ? 0. : (1e-12 / my_w0);
 
-            // group velocity vector [m/s]
-            Eigen::Vector3d vg_vector = 1e3 * sp.vg.col(nbranch);
+                // angular frequency [rad/s]
+                double omega = 1e12 * sp.omega[nbranch];
 
-            // write output
-            filewriter << nq << "," << nbranch << "," << qa << "," << qb << ","
-                       << qc << ",";
-            filewriter << omega << "," << C << "," << tau0 << ",";
-            filewriter << vg_vector(0) << "," << vg_vector(1) << ","
-                       << vg_vector(2) << "," << P3minus(nbranch,nq) << "," 
-                       << P3plus(nbranch,nq) << std::endl;
+                // volumetric heat capacity [J/m^3-K]
+                double C = prefactor *
+                        alma::bose_einstein_kernel(sp.omega[nbranch], Tambient);
+
+                // group velocity vector [m/s]
+                Eigen::Vector3d vg_vector = 1e3 * sp.vg.col(nbranch);
+
+                // write output
+                filewriter << nq << "," << nbranch << "," << qa << "," << qb << ","
+                        << qc << ",";
+                filewriter << omega << "," << C << "," << tau0 << ",";
+                filewriter << vg_vector(0) << "," << vg_vector(1) << ","
+                        << vg_vector(2) << "," << P3minus(nbranch,nq) << ","
+                        << P3plus(nbranch,nq) << "," << WP3minus(nbranch,nq) << ","
+                        << WP3plus(nbranch,nq) << std::endl;
+            }
         }
+
+        filewriter.close();
+
+        std::cout << "-Total phase space : " << phase_space.first  << " [ps/rad]" << std::endl;
+        std::cout << "-Total phase space : " << phase_space.second << " [ps^{4}/rad^{4}]" << std::endl;
+        std::cout << "-Small-grain thermal conductivity tensor [W / (m K nm)]:" << std::endl;
+        std::cout << kappa_sg << std::endl;
+        std::cout << std::endl << "[DONE.]" << std::endl;
     }
-
-    filewriter.close();
-
-    std::cout << "-Total phase space : " << P3total << " [nm^6 / THz^4]" << std::endl;
-    std::cout << std::endl << "[DONE.]" << std::endl;
 
     return 0;
 }

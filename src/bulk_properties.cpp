@@ -245,44 +245,79 @@ double calc_kappa_1d(const alma::Crystal_structure& poscar,
     return (1e21 * alma::constants::kB / poscar.V / grid.nqpoints) * nruter;
 }
 
-double calc_phase_space(const alma::Crystal_structure& poscar,
-                        const alma::Gamma_grid& grid,
-                        const double T,
-                        std::vector<alma::Threeph_process>& processes,
-                        Eigen::Ref<Eigen::MatrixXd> P3plus,
-                        Eigen::Ref<Eigen::MatrixXd> P3minus) {
+std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
+                                          const alma::Gamma_grid& grid,
+                                          const double T,
+                                          std::vector<alma::Threeph_process>& processes,
+                                          Eigen::MatrixXd& P3plus,
+                                          Eigen::MatrixXd& P3minus,
+                                          Eigen::MatrixXd& WP3plus,
+                                          Eigen::MatrixXd& WP3minus,
+                                          const boost::mpi::communicator& world) {
 
     const auto nqpoints = grid.nqpoints;
     const auto nmodes = grid.get_spectrum_at_q(0).omega.size();
-    const double VBZ = std::fabs(poscar.rlattvec.determinant());
-    const double factor = 2.0 * boost::math::pow<4>(2.0 * constants::pi) / 
-                 (3.0 * nqpoints * boost::math::pow<2>(VBZ) * boost::math::pow<3>(nmodes));
 
-    double nruter = 0.0;
+    auto P3_denominator = static_cast<double>(
+        boost::math::pow<2>(nqpoints) * boost::math::pow<3>(nmodes));
+
+    constexpr double plus_factor  = 2.0 / 3.0;
+    constexpr double minus_factor = 1.0 / 3.0;
+
+    std::pair<double,double> nruter = std::make_pair(0.0, 0.0);
+
+    Eigen::MatrixXd my_P3plus(nmodes,nqpoints);
+    my_P3plus.setZero();
+    Eigen::MatrixXd my_P3minus(nmodes,nqpoints);
+    my_P3minus.setZero();
+    Eigen::MatrixXd my_WP3plus(nmodes,nqpoints);
+    my_WP3plus.setZero();
+    Eigen::MatrixXd my_WP3minus(nmodes,nqpoints);
+    my_WP3minus.setZero();
+
+    // Compute the contribution with the appropriate weight
+    std::for_each(processes.begin(), processes.end(), [&](alma::Threeph_process &process){
+        auto wp3   = process.compute_weighted_gaussian(grid, T) / nqpoints;
+        auto p3    = process.compute_gaussian() / P3_denominator;
+        auto iq    = process.q[0];
+        auto alpha = process.alpha[0]; 
+        auto equivalent_qpoints   = grid.equivalent_qpoints(iq);
+        auto symmetry_weight      = grid.get_cardinal(process.c);
+        for (const auto& equivalent_qpoint : equivalent_qpoints) {
+            if (process.type == alma::threeph_type::absorption) {
+                my_P3plus(alpha,equivalent_qpoint)  +=   p3;
+                my_WP3plus(alpha,equivalent_qpoint) +=   wp3;
+            }
+            else {
+                my_WP3minus(alpha,equivalent_qpoint) +=  p3;
+                my_WP3minus(alpha,equivalent_qpoint) +=  wp3;
+            }
+        }
+
+        double factor = process.type == alma::threeph_type::absorption ? plus_factor : minus_factor;
+
+        nruter.first  += factor * symmetry_weight * p3;
+        nruter.second += symmetry_weight * wp3;
+    });
+
+    // In place reduction of the nruter components
+    nruter.first  = boost::mpi::all_reduce(world, nruter.first, std::plus<double>());
+    nruter.second = boost::mpi::all_reduce(world, nruter.second, std::plus<double>());
 
     P3plus.resize(nmodes,nqpoints);
     P3plus.setZero();
     P3minus.resize(nmodes,nqpoints);
     P3minus.setZero();
+    WP3plus.resize(nmodes,nqpoints);
+    WP3plus.setZero();
+    WP3minus.resize(nmodes,nqpoints);
+    WP3minus.setZero();
 
-    // Compute the contribution with the appropriate weight
-    std::for_each(processes.begin(), processes.end(), [&](alma::Threeph_process &process){
-        auto wp3   = process.compute_weighted_gaussian(grid, T);
-        auto iq    = process.q[0];
-        auto alpha = process.alpha[0]; 
-        auto equivalent_qpoints = grid.equivalent_qpoints(iq);
-        auto symmetry_weight = equivalent_qpoints.size();
-        for (const auto& equivalent : equivalent_qpoints) {
-            if (process.type == alma::threeph_type::absorption) {
-                P3plus(alpha,equivalent) +=  factor * wp3;
-            }
-            else {
-                P3minus(alpha,equivalent) += factor * wp3;
-            }
-        }
-        nruter += factor * symmetry_weight * wp3;
-
-    });
+    // Reduction over all processes
+    boost::mpi::all_reduce(world, my_P3plus.data(), my_P3plus.size(), P3plus.data(), std::plus<double>());
+    boost::mpi::all_reduce(world, my_WP3plus.data(), my_WP3plus.size(), WP3plus.data(), std::plus<double>());
+    boost::mpi::all_reduce(world, my_P3minus.data(), my_P3minus.size(), P3minus.data(), std::plus<double>());
+    boost::mpi::all_reduce(world, my_WP3minus.data(), my_WP3minus.size(), WP3minus.data(), std::plus<double>());
 
     return nruter;
 
