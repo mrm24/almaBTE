@@ -240,9 +240,27 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
             }
 	    // Note that the mass factor is not needed
             blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) =
-                fc_ij.real();
+                fc_ij.real().array();
         }
     }
+
+    // Impose acousting sum-rule to the short-range force constants
+    // This is important as otherwise the new force constants
+    // are not necessarily complying with the translational invariance
+    // as that one was enforced in Phonopy including the dipole-dipole 
+    // interaction. Therefore, not doing this step can lead
+    // to spurious imaginary frequencies near Gamma.
+    Eigen::MatrixXd asr_correction = Eigen::MatrixXd::Zero(ndof,ndof);
+    for (auto iatom = 0; iatom < natoms; iatom++) {
+        for (auto &[pos,block] : blocks) {
+            for (auto jatom = 0; jatom < natoms; jatom++){
+                asr_correction.block<3, 3>(3 * iatom, 3* iatom) -=
+                    (block.block<3, 3>(3 * iatom, 3* jatom).array() * this->massmatrix.block<3, 3>(3 * iatom, 3* jatom)).matrix();
+            }
+        }
+    }
+    // Correcting the on-site terms to impose the acoustic sum rule
+    blocks[{0,0,0}] += (asr_correction.array() / this->massmatrix).matrix();
 
     // Overwrite the original force constants
     // with the short range ones
@@ -702,4 +720,5 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     return alma::make_unique<Spectrum_at_point>(omega, wfs, vg, wigner_v);
 }
 } // namespace alma
+
 
