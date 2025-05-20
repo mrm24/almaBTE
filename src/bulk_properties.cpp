@@ -289,7 +289,7 @@ std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
                 my_WP3plus(alpha,equivalent_qpoint) +=   wp3;
             }
             else {
-                my_WP3minus(alpha,equivalent_qpoint) +=  p3;
+                my_P3minus(alpha,equivalent_qpoint) +=  p3;
                 my_WP3minus(alpha,equivalent_qpoint) +=  wp3;
             }
         }
