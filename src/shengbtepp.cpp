@@ -683,7 +683,6 @@ int main(int argc, char** argv) {
         for (std::size_t iq = 0; iq < grid->nqpoints; ++iq) {
             auto spectrum = grid->get_spectrum_at_q(iq);
             for (std::size_t im = 0; im < nmodes; ++im) {
-	        std::cout << iq << '\t' << im << '\t' << spectrum.omega(im) << '\t' <<  sigma(im, iq) << std::endl;
                 auto dist = alma::make_unique<boost::math::normal>(
                     spectrum.omega(im), sigma(im, iq));
                 for (std::size_t i = 0;

@@ -276,29 +276,39 @@ std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
     my_WP3minus.setZero();
 
     // Compute the contribution with the appropriate weight
-    std::for_each(processes.begin(), processes.end(), [&](alma::Threeph_process &process){
-        auto wp3   = process.compute_weighted_gaussian(grid, T) / nqpoints;
-        auto p3    = process.compute_gaussian() / P3_denominator;
-        auto iq    = process.q[0];
-        auto alpha = process.alpha[0]; 
-        auto equivalent_qpoints   = grid.equivalent_qpoints(iq);
-        auto symmetry_weight      = grid.get_cardinal(process.c);
-        for (const auto& equivalent_qpoint : equivalent_qpoints) {
-            if (process.type == alma::threeph_type::absorption) {
-                my_P3plus(alpha,equivalent_qpoint)  +=   p3;
-                my_WP3plus(alpha,equivalent_qpoint) +=   wp3;
-            }
-            else {
-                my_P3minus(alpha,equivalent_qpoint) +=  p3;
-                my_WP3minus(alpha,equivalent_qpoint) +=  wp3;
-            }
+    for (auto &process : processes) {
+        auto gaussian = process.compute_gaussian() / P3_denominator;
+        auto symmetry_weight = grid.get_cardinal(process.c);
+        if (process.type == alma::threeph_type::absorption) {
+            auto p3 = plus_factor * gaussian;
+            nruter.first += p3 * symmetry_weight;
+            my_P3plus(process.alpha[0], process.q[0])  += p3;
+            auto wp3 = process.compute_weighted_gaussian(grid, T) / nqpoints;
+            nruter.second += wp3 * symmetry_weight;
+            my_WP3plus(process.alpha[0], process.q[0]) += wp3;
         }
+        else {
+            auto p3 = minus_factor * gaussian;
+            nruter.first += p3 * symmetry_weight;
+            my_P3minus(process.alpha[0], process.q[0])  += p3;
+            auto wp3 = process.compute_weighted_gaussian(grid, T) / nqpoints;
+            nruter.second += wp3 * symmetry_weight;
+            my_WP3minus(process.alpha[0], process.q[0]) += wp3;
+        }
+    }
 
-        double factor = process.type == alma::threeph_type::absorption ? plus_factor : minus_factor;
+    // Regenerate values in the full BZ using symmetry
+    auto nequivalences = grid.get_nequivalences();
+    for (decltype(nequivalences) i = 0; i < nequivalences; ++i) {
+        auto eq = grid.get_equivalence(i);
 
-        nruter.first  += factor * symmetry_weight * p3;
-        nruter.second += symmetry_weight * wp3;
-    });
+        for (std::size_t iq = 1; iq < eq.size(); ++iq) {
+            my_P3plus.col(eq[iq]) = my_P3plus.col(eq[0]);
+            my_WP3plus.col(eq[iq]) = my_WP3plus.col(eq[0]);
+            my_P3minus.col(eq[iq]) = my_P3minus.col(eq[0]);
+            my_WP3minus.col(eq[iq]) = my_WP3minus.col(eq[0]);
+        }
+    }
 
     // In place reduction of the nruter components
     nruter.first  = boost::mpi::all_reduce(world, nruter.first, std::plus<double>());
