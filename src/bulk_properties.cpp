@@ -333,4 +333,67 @@ std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
 
 }
 
+
+double calc_anharmonicity(const alma::Crystal_structure& poscar,
+                          const alma::Gamma_grid& grid,
+                          std::vector<alma::Threeph_process>& processes,
+                          Eigen::MatrixXd& vp2,
+                          const boost::mpi::communicator& world) {
+
+    const auto nqpoints = grid.nqpoints;
+    const auto nmodes = grid.get_spectrum_at_q(0).omega.size();
+
+    // constexpr double plus_factor  = 1.0;
+    // constexpr double minus_factor = 1.0 / 2.0;
+
+    double my_vp2_total = 0.0;
+    std::size_t nplus  = 0;
+    std::size_t nminus = 0;
+    Eigen::MatrixXd my_vp2(nmodes,nqpoints);
+    my_vp2.setZero();
+
+    /// Get the number of processes
+    for (auto &process : processes) {
+        auto symmetry_weight = grid.get_cardinal(process.c);
+        if (process.type == alma::threeph_type::absorption) {
+            nplus += symmetry_weight;
+        }
+        else {
+            nminus += symmetry_weight;
+        }
+    }
+
+    nplus  = boost::mpi::all_reduce(world, nplus, std::plus<std::size_t>());
+    nminus = boost::mpi::all_reduce(world, nminus, std::plus<std::size_t>());
+    auto ntotal = nplus + nminus;
+
+    // Compute the contribution to the mean
+    for (auto &process : processes) {
+        auto matel = process.get_vp2() / ntotal;
+        auto symmetry_weight = grid.get_cardinal(process.c);
+        my_vp2_total += symmetry_weight * matel;
+        my_vp2(process.alpha[0],process.q[0]) += matel;
+    }
+
+    // Regenerate values in the full BZ using symmetry
+    auto nequivalences = grid.get_nequivalences();
+    for (decltype(nequivalences) i = 0; i < nequivalences; ++i) {
+        auto eq = grid.get_equivalence(i);
+        for (std::size_t iq = 1; iq < eq.size(); ++iq)
+            my_vp2.col(eq[iq])  = my_vp2.col(eq[0]);
+    }
+
+    // In place reduction of the nruter components
+    my_vp2_total  = boost::mpi::all_reduce(world, my_vp2_total, std::plus<double>());
+
+    vp2.resize(nmodes,nqpoints);
+    vp2.setZero();
+
+    // Reduction over all processes
+    boost::mpi::all_reduce(world, my_vp2.data(), my_vp2.size(), vp2.data(), std::plus<double>());
+
+    return my_vp2_total;
+
+}
+
 } // namespace alma

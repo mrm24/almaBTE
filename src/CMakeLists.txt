@@ -78,6 +78,11 @@ target_link_libraries(interfaces alma_framework
 ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
 libsymspg ${HDF5_LIBS} Threads::Threads)
 
+add_executable(gruneisen gruneisen.cpp)
+target_link_libraries(gruneisen alma_framework
+${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
+libsymspg ${HDF5_LIBS} Threads::Threads)
+
 # shengbtepp is a separate target that will not be built by "make all"
 if(BUILD_SHENGBTEPP)
   add_executable(shengbtepp EXCLUDE_FROM_ALL read_shengcontrol.f90 shengbtepp.cpp)
