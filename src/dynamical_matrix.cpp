@@ -240,10 +240,28 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
             }
 	    // Note that the mass factor is not needed
             blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) =
-                fc_ij.real().array();
+                fc_ij.real().array() / p.cjp.size();
         }
     }
 
+    // TESTING if equal when not substracting the LR from the SR dynmat
+    // RESULT: works
+    // std::size_t ib = 0;
+    // for (auto &[pos,block] : blocks) {
+    //     std::cout << "#block " <<  ib << std::endl;
+    //     for (auto iat=0; iat < natoms; iat++) for (auto jat=0; jat < natoms; jat++) for (auto a=0; a<3; a++) for (auto b=0; b<3; b++) {
+    //         auto old_ = this->blocks.at(ib)(3*iat+a,3*jat+b);
+    //         auto mm   = this->masks.at(ib)(3*iat+a,3*jat+b);
+    //         auto new_ = block(3*iat+a,3*jat+b);
+    //         if (almost_equal(old_,0.0) and almost_equal(new_,0.0)) continue;
+    //         if (!almost_equal(old_ - new_,0.0))
+    //             std::cout << iat << '\t' << a << '\t' << jat << '\t' << b << '\t' << old_ << '\t' << new_ << '\t' << mm << std::endl;
+    //     }
+    //     ib++;
+    // }
+    // exit(1);
+
+    /*
     // Impose acousting sum-rule to the short-range force constants
     // This is important as otherwise the new force constants
     // are not necessarily complying with the translational invariance
@@ -261,6 +279,7 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
     }
     // Correcting the on-site terms to impose the acoustic sum rule
     blocks[{0,0,0}] += (asr_correction.array() / this->massmatrix).matrix();
+    */
 
     // Overwrite the original force constants
     // with the short range ones
@@ -349,11 +368,9 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_wang(
 std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
 
-    // The dipole-dipole contribution is in Rydberg units
-    // The derivatives are in Ry / nm
-    // Note that we obtain an angular frequency
-    //constexpr double Ry2toTHz2 = boost::math::pow<2>(constants::Rydberg_energy * 1.0e-12 / constants::hbar);
-    //constexpr double nm3toBohr = boost::math::pow<3>(1e-9 / constants::a0);
+    // The dipole-dipole contribution using alma units
+    // TESTING: prefactor
+    // RESULT:  YES
     constexpr double prefactor = constants::e * constants::e /
                                  constants::epsilon0 / constants::amu * 1e3;
 
