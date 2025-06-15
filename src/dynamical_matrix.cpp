@@ -261,7 +261,7 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
     // }
     // exit(1);
 
-    /*
+    
     // Impose acousting sum-rule to the short-range force constants
     // This is important as otherwise the new force constants
     // are not necessarily complying with the translational invariance
@@ -279,7 +279,6 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
     }
     // Correcting the on-site terms to impose the acoustic sum rule
     blocks[{0,0,0}] += (asr_correction.array() / this->massmatrix).matrix();
-    */
 
     // Overwrite the original force constants
     // with the short range ones
@@ -365,6 +364,8 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_wang(
     return nruter;
 }
 
+// TESTING: Reproduces Sheng for given BORN and q-point
+// RESULT: Yes
 std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
 
@@ -377,7 +378,7 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
 
     auto ndof = this->blocks[0].cols();
     auto natoms = ndof / 3;
-    // We need the 1st BZ q-point
+    // We need the 1st BZ q-point (Should we average over equivalent points)
     Eigen::Vector3d uq = this->structure.map_to_firstbz(q).col(0);
 
     std::array<Eigen::ArrayXXcd, 4> nruter;
