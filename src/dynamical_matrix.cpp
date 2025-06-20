@@ -142,8 +142,13 @@ void Dynamical_matrix_builder::copy_blocks(const Harmonic_ifcs& fcs) {
                 block.block<3, 3>(3 * p.i, 3 * p.j);
             masks[pp].block<3, 3>(3 * p.i, 3 * p.j) =
                 mask.block<3, 3>(3 * p.i, 3 * p.j);
+
+	    //std::cout << p.i << '\t' << p.j << '\t' << pp[0] << '\t' << pp[1] << '\t' << pp[2] << '\t' << p.cjp.size() << std::endl;
+            //std::cout << blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) << std::endl;
         }
     }
+
+    //exit(1);
 
     auto kav = split_keys_and_values(blocks);
     this->pos.swap(std::get<0>(kav));
@@ -168,7 +173,7 @@ void Dynamical_matrix_builder::copy_blocks(const Harmonic_ifcs& fcs) {
     // See Eqs. 52-54 of 10.1088/1361-648X/acd831
     //
     if (this->nonanalytic && (this->nonanalytic_method == nonanalytic_treatment::gonze))
-        remove_dipole_dipole(fcs, pairs);
+         remove_dipole_dipole(fcs, pairs);
 
 }
 
@@ -239,11 +244,18 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
                 blocks[pp] = Eigen::MatrixXd::Zero(ndof, ndof);
             }
 	    // Note that the mass factor is not needed
-            blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) =
+            blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) = 
                 fc_ij.real().array() / p.cjp.size();
+
+	    // std::cout << p.i << '\t' << p.j << '\t' << pp[0] << '\t' << pp[1] << '\t' << pp[2] << '\t' << p.cjp.size() << std::endl;
+	    // std::cout << blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) / (constants::e / constants::amu * 1e-4) << std::endl;
+
         }
     }
 
+    // exit(1);
+
+    /*
     // TESTING if equal when not substracting the LR from the SR dynmat
     // RESULT: works
     // std::size_t ib = 0;
@@ -260,31 +272,13 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
     //     ib++;
     // }
     // exit(1);
-
-    
-    // Impose acousting sum-rule to the short-range force constants
-    // This is important as otherwise the new force constants
-    // are not necessarily complying with the translational invariance
-    // as that one was enforced in Phonopy including the dipole-dipole 
-    // interaction. Therefore, not doing this step can lead
-    // to spurious imaginary frequencies near Gamma.
-    Eigen::MatrixXd asr_correction = Eigen::MatrixXd::Zero(ndof,ndof);
-    for (auto iatom = 0; iatom < natoms; iatom++) {
-        for (auto &[pos,block] : blocks) {
-            for (auto jatom = 0; jatom < natoms; jatom++){
-                asr_correction.block<3, 3>(3 * iatom, 3* iatom) -=
-                    (block.block<3, 3>(3 * iatom, 3* jatom).array() * this->massmatrix.block<3, 3>(3 * iatom, 3* jatom)).matrix();
-            }
-        }
-    }
-    // Correcting the on-site terms to impose the acoustic sum rule
-    blocks[{0,0,0}] += (asr_correction.array() / this->massmatrix).matrix();
+    */
 
     // Overwrite the original force constants
     // with the short range ones
     auto kav = split_keys_and_values(blocks);
     this->blocks.swap(std::get<1>(kav));
-
+ 
 }
 
 
@@ -386,29 +380,38 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
     for (auto i = 0; i < 4; ++i)
         nruter[i].setZero(ndof, ndof);
 
-    auto Gmax  = 14.0;
-    auto alpha = std::max({
-            this->structure.rlattvec.col(0).squaredNorm(),
-            this->structure.rlattvec.col(1).squaredNorm(),
-            this->structure.rlattvec.col(2).squaredNorm()});
+    const auto G_cutoff = 2.0 * constants::pi * std::cbrt(900.0 / (4.0 * constants::pi) / this->V);
+    constexpr double exp_cutoff = 1e-10;
+    double GepsilonG = G_cutoff * G_cutoff * this->born.epsilon.trace() / 3.0;
+    const double alpha = -GepsilonG / 4.0 / std::log(exp_cutoff);
 
     /// Get the G-mesh size, only those dimensions with periodicity are considered
-    std::array<double,3> cell_g;
-    cell_g[0] = this->na == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(0).norm()) + 1;
-    cell_g[1] = this->nb == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(1).norm()) + 1;
-    cell_g[2] = this->nc == 1 ? 0 : int( std::sqrt(Gmax * 4.0 * alpha) / this->structure.rlattvec.col(2).norm()) + 1;
+    int shell = 0;
+    while(true) {
+        bool inside = false;
+        for (auto iga : {-shell, 0, shell}) for (auto igb : {-shell, 0, shell}) for (auto igc : {-shell, 0, shell}) {
+            if (iga == 0 && igb == 0 && igc == 0 && shell != 0) continue;
+            Eigen::Vector3d G = iga * this->structure.rlattvec.col(0) +
+                                igb * this->structure.rlattvec.col(1) +
+                                igc * this->structure.rlattvec.col(2);
+            if (G.norm() < G_cutoff) inside = true;
+        }
+        if (!inside) break;
+        shell++;
+    }
 
-    for (auto iga = -cell_g[0]; iga <= cell_g[0]; iga++)
-        for (auto igb = -cell_g[1]; igb <= cell_g[1]; igb++)
-            for (auto igc = -cell_g[2]; igc <= cell_g[2]; igc++) {
+    /// Iterate over the elements in the shell to get the proper result
+    for (auto iga = -shell; iga <= shell; iga++)
+        for (auto igb = -shell; igb <= shell; igb++)
+            for (auto igc = -shell; igc <= shell; igc++) {
                 Eigen::Vector3d G = iga * this->structure.rlattvec.col(0) +
                                     igb * this->structure.rlattvec.col(1) +
                                     igc * this->structure.rlattvec.col(2);
 
-                double GepsilonG = G.dot(this->born.epsilon * G);
-
-                if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
-                    auto decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
+                GepsilonG = G.dot(this->born.epsilon * G);
+                //We substract the q=0 term to impose the ASR
+                if (!almost_equal(G.norm(),0.0)) {
+                    double decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
                     for (auto iatom = 0; iatom < natoms; iatom++) {
                         Eigen::MatrixXd zi{G.transpose() * this->born.born[iatom]};
                         for (auto jatom = 0; jatom < natoms; jatom++) {
@@ -417,14 +420,16 @@ std::array<Eigen::ArrayXXcd, 4> Dynamical_matrix_builder::build_nac_gonze(
                                 this->structure.positions.col(iatom) -  this->structure.positions.col(jatom));
                             Eigen::MatrixXd zij{zi.transpose() * zj};
                             auto phase = std::exp(constants::imud * G.dot(taudiff));
-                            nruter[0].block<3, 3>(3 * iatom, 3 * iatom) -= (zij * phase * decay).array();
+                            // We impose Hermiticity on the long-range part of the dynamical matrix
+                            nruter[0].block<3, 3>(3 * iatom, 3 * iatom) -= 0.5 * (zij * phase * decay).array();
+                            nruter[0].block<3, 3>(3 * iatom, 3 * iatom) -= 0.5 * (zij.transpose() * std::conj(phase) * decay).array();
                         }
                     }
                 }
 
                 Eigen::Vector3d Gq = G + uq;
                 GepsilonG = Gq.dot(this->born.epsilon * Gq);
-                if (!almost_equal(GepsilonG,0.0) && GepsilonG / alpha / 4.0 < Gmax) {
+                if (!almost_equal(Gq.norm(),0.0)) {
                     double decay = std::exp(- GepsilonG / alpha / 4.0) / GepsilonG;
                     Eigen::Vector3d dGepsilonG = (this->born.epsilon + this->born.epsilon.transpose()) * Gq;
                     for (auto iatom = 0; iatom < natoms; iatom++) {
@@ -591,6 +596,14 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     for (auto i = 0; i < omega.size(); ++i) {
         omega(i) = alma::ssqrt(omega2(i));
     }
+
+    Eigen::MatrixXd qbzs = this->structure.map_to_firstbz(q);
+
+    /*if (omega.minCoeff() < 0.0) {
+        std::cout << "negative" << std::endl;
+        std::cout << 16 * (this->structure.rlattvec.inverse() * q).transpose() << '\t' << qbzs.col(0).norm() << std::endl;
+        std::cout << omega.transpose() << std::endl << std::endl;
+    }*/
 
     /// Build Wigner velocities. See 10.1103/PhysRevX.12.041011 
     /// for the theoretical framework.
