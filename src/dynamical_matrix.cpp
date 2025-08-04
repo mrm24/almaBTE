@@ -706,7 +706,7 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     // eigenvectors that diagonalize d D / d q_x over the degenerate subspace,
     // and so on.
     for (auto i = 1; i <= omega.size(); ++i) {
-        if (i == omega.size() || !almost_equal(omega(i), omega(start))||true) {
+        if (i == omega.size() || !almost_equal(omega(i), omega(start))) {
             int dim = i - start;
             if (!almost_equal(omega(start), 0.)) {
                 // Shortcut for non-degenerate cases.
