@@ -35,7 +35,11 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <boost/iostreams/stream_buffer.hpp>
 #include <boost/iostreams/device/null.hpp>
+#if BOOST_VERSION >= 107100
+#include <boost/uuid/detail/sha1.hpp>
+#else
 #include <boost/uuid/sha1.hpp>
+#endif
 #include <boost/endian/conversion.hpp>
 #include <Eigen/Dense>
 #include <basen.hpp>

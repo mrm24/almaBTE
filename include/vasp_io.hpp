@@ -21,6 +21,10 @@
 #include <structures.hpp>
 
 namespace alma {
+
+/// We want to handle the different formats for FORCE_CONSTANTS
+enum class force_constants_format { old = 0, new_full = 1, new_compact = 2 };
+
 /// Build a Crystal_structure object from a VASP POSCAR file.
 ///
 /// @param[in] filename - path to the POSCAR file

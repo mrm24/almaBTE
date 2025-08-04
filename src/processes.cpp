@@ -154,7 +154,10 @@ double Threeph_process::compute_vp2(
     std::complex<double> vp = 0.;
 
     // Iterate over triplets to build the matrix element.
-    for (auto& tri : thirdorder) {
+    #pragma omp declare reduction(+: std::complex<double>: omp_out += omp_in) initializer(omp_priv = omp_orig)
+    #pragma omp parallel for reduction(+:vp)
+    for (auto tri_it = thirdorder.begin(); tri_it < thirdorder.end(); ++tri_it) {
+	auto& tri = *tri_it;
         double massfactor = std::sqrt(
             cell.get_mass(tri.i) * cell.get_mass(tri.j) * cell.get_mass(tri.k));
         double arg2 = s * q2.dot(tri.rj);
