@@ -1,10 +1,10 @@
 # Standard boilerplate.
-cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.6.0 FATAL_ERROR)
 project(ALMA CXX C)
 
-# Assume C++11 for all C++ source,
+# Assume C++17 for all C++ source,
 # and require compiler support.
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED on)
 
 # Try to find a suitable Fortran compiler to build the ShengBTE emulator.
@@ -74,12 +74,15 @@ include_directories(SYSTEM ${MPI_CXX_INCLUDE_PATH})
 string(CONCAT CMAKE_CXX_FLAGS ${MPI_CXX_COMPILE_FLAGS})
 string(CONCAT CMAKE_CXX_LINK_FLAGS ${MPI_CXX_LINK_FLAGS})
 
+# Detect OpenMP
+find_package(OpenMP REQUIRED) 
+
 # Compiler flags (currently only for g++ or clang++).
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall")
+    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS}")
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall -Wno-unused-local-typedef")
+    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS} -Wno-unused-local-typedef")
 endif()
 
 # Set up some variables so that they can be used in the code.
@@ -132,11 +135,12 @@ ExternalProject_Add(
   spglib
   URL file://${PROJECT_SOURCE_DIR}/external/spglib-1.9.4.tar.gz
   PREFIX external/spglib
-  CONFIGURE_COMMAND <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND1} --disable-shared --with-pic --enable-static --prefix=<INSTALL_DIR> || <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND2}  ${SPGLIB_CONFIGURE_OPTIONS} --disable-shared --enable-static --prefix=<INSTALL_DIR>
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE  
+  CONFIGURE_COMMAND <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND1} --disable-shared --with-pic --enable-static --prefix=<INSTALL_DIR> || <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND2} ${SPGLIB_CONFIGURE_OPTIONS} --disable-shared --enable-static --prefix=<INSTALL_DIR>
   BUILD_COMMAND make
   INSTALL_COMMAND make install
   BUILD_IN_SOURCE 1
-  )
+)
 # Make sure that the spglib headers and libraries are available.
 ExternalProject_Get_Property(spglib install_dir)
 include_directories(${install_dir}/include)

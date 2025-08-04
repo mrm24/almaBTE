@@ -63,6 +63,22 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
                            const Eigen::Ref<const Eigen::ArrayXXd>& w,
                            double T);
 
+/// Obtain the coherence term to the thermal conductivity
+/// See 10.1103/PhysRevX.12.041011 
+///
+/// @param[in] poscar - description of the unit cell
+/// @param[in] grid - phonon spectrum on a regular q-point grid
+/// @param[in] syms - symmetry operations object
+/// @param[in] w - scattering rates for all modes in each of
+/// the irreducible classes of q points in the grid.
+/// @param[in] T - temperature in K
+/// @return the thermal conductivity tensor in SI units
+Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
+                                     const alma::Gamma_grid& grid,
+                                     const alma::Symmetry_operations& syms,
+                                     const Eigen::Ref<const Eigen::ArrayXXd>& w,
+                                     double T);
+
 /// Obtain the small-grain thermal conductivity tensor.
 ///
 /// The small-grain thermal conductivity is defined as the value of the
