@@ -273,6 +273,44 @@ void save_bulk_hdf5(const char* filename,
             }
         }
         write_string_attribute(vg_dset, "Units", "nm / ps");
+
+        // Cartesian components of the Wigner matrix velocities.
+        hsize_t wigner_v_dims[] = {grid.nqpoints, 3, nmodes*nmodes};
+        DataSpace wigner_v_dspace(3, wigner_v_dims);
+        DataSet re_wigner_v_dset = h5f.createDataSet(
+            "/qpoint_grid/re_wigner_v", PredType::IEEE_F64LE, wigner_v_dspace);
+        DataSet im_wigner_v_dset = h5f.createDataSet(
+            "/qpoint_grid/im_wigner_v", PredType::IEEE_F64LE, wigner_v_dspace);
+        hsize_t wigner_v_pos[] = {0, 0, 0};
+
+        for (hsize_t i = 0; i < grid.nqpoints; ++i) {
+            wigner_v_pos[0] = i;
+
+            for (hsize_t j1 = 0; j1 < 3; ++j1) {
+                wigner_v_pos[1] = j1;
+
+                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
+
+                        for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
+
+                            wigner_v_pos[2] = j2+nmodes*j3;
+
+                            wigner_v_dspace.selectElements(H5S_SELECT_SET, 1, wigner_v_pos);
+                            auto value =
+                                grid.get_spectrum_at_q(i).wigner_v(j1, j2+nmodes*j3);
+                            double re = value.real();
+                            double im = value.imag();
+                            re_wigner_v_dset.write(
+                                &re, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
+                            im_wigner_v_dset.write(
+                                &im, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
+
+                    }
+                }
+            }
+        }
+        write_string_attribute(re_wigner_v_dset, "Units", "nm / ps");
+        write_string_attribute(im_wigner_v_dset, "Units", "nm / ps");
         // Allowed three-phonon processes. See processes.hpp for
         // details.
         hsize_t c_dims[] = {nprocs};
@@ -447,7 +485,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
     std::string description;
 
     if (my_id == 0) {
-        h5f = make_unique<H5File>(filename, H5F_ACC_RDONLY);
+        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDONLY);
         description = read_file_attributes(*h5f);
     }
     // Each piece of data read is broadcast to all
@@ -521,6 +559,10 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         for (hsize_t i = 0; i < nelements; ++i) {
             elements_dspace.selectElements(H5S_SELECT_SET, 1, &i);
             elements_dset.read(value, elements_type, scalar, elements_dspace);
+	    value.erase(std::remove_if(value.begin(), value.end(), [](char c) {
+                       return  (c == '\t') or (c == '\n') or (c == '\r') or
+		               (c == '\0') or (c < 32 || c > 126);
+                     }), value.end());
             elements.push_back(value);
         }
     }
@@ -539,7 +581,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
     boost::mpi::broadcast(comm, numbers, 0);
     // Build a Crystal_structure object.
     auto nruter1 =
-        make_unique<Crystal_structure>(lattvec, positions, elements, numbers);
+        alma::make_unique<Crystal_structure>(lattvec, positions, elements, numbers);
     // Tolerance for symmetry search.
     double symprec;
 
@@ -549,7 +591,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
     }
     boost::mpi::broadcast(comm, symprec, 0);
     // Build a Symmetry_operations object.
-    auto nruter2 = make_unique<Symmetry_operations>(*nruter1, symprec);
+    auto nruter2 = alma::make_unique<Symmetry_operations>(*nruter1, symprec);
     // Dimensions of the q-point grid.
     int nq[3];
 
@@ -563,7 +605,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
     // Build a stub Gamma_grid object, to be filled in the
     // next section
     auto nruter3 =
-        make_unique<Gamma_grid>(*nruter1, *nruter2, nq[0], nq[1], nq[2]);
+        alma::make_unique<Gamma_grid>(*nruter1, *nruter2, nq[0], nq[1], nq[2]);
     // Harmonic properties at each q point.
     hsize_t nqpoints;
     hsize_t nmodes;
@@ -582,13 +624,18 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         DataSet wf_re_dset = h5f->openDataSet("/qpoint_grid/re_wf");
         DataSpace wf_dspace = wf_re_dset.getSpace();
         DataSet wf_im_dset = h5f->openDataSet("/qpoint_grid/im_wf");
+        DataSet re_wigner_v_dset = h5f->openDataSet("/qpoint_grid/re_wigner_v");
+        DataSpace wigner_v_dspace = re_wigner_v_dset.getSpace();
+        DataSet im_wigner_v_dset = h5f->openDataSet("/qpoint_grid/im_wigner_v");
         Eigen::ArrayXd omega(nmodes);
         Eigen::MatrixXcd wfs(nmodes, nmodes);
         Eigen::ArrayXXd vg(3, nmodes);
+        Eigen::ArrayXXcd wigner_v(3, nmodes*nmodes);
         hsize_t omega_start[2];
         hsize_t omega_count[2];
         hsize_t vg_pos[3];
         hsize_t wf_pos[3];
+        hsize_t wigner_v_pos[3];
         double value;
         double re;
         double im;
@@ -602,6 +649,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         for (hsize_t i = 0; i < nqpoints; ++i) {
             omega_start[0] = i;
             vg_pos[0] = i;
+            wigner_v_pos[0] = i;
             wf_pos[0] = i;
             omega_dspace.selectHyperslab(
                 H5S_SELECT_SET, omega_count, omega_start);
@@ -629,6 +677,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
 
             for (hsize_t j1 = 0; j1 < 3; ++j1) {
                 vg_pos[1] = j1;
+                wigner_v_pos[1] = j1;
 
                 for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
                     vg_pos[2] = j2;
@@ -637,9 +686,21 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
                         &value, PredType::NATIVE_DOUBLE, scalar, vg_dspace);
                     boost::mpi::broadcast(comm, value, 0);
                     vg(j1, j2) = value;
+
+                    for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
+                        wigner_v_pos[2] = j2+nmodes*j3;
+                        wigner_v_dspace.selectElements(H5S_SELECT_SET, 1, wigner_v_pos);
+                        re_wigner_v_dset.read(
+                            &re, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
+                        im_wigner_v_dset.read(
+                            &im, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
+                        boost::mpi::broadcast(comm, re, 0);
+                        boost::mpi::broadcast(comm, im, 0);
+                        wigner_v(j1, j2+nmodes*j3) = std::complex<double>(re, im);
+                    }
                 }
             }
-            nruter3->spectrum.emplace_back(omega, wfs, vg);
+            nruter3->spectrum.emplace_back(omega, wfs, vg, wigner_v);
         }
     }
     else {
@@ -648,6 +709,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         Eigen::ArrayXd omega(nmodes);
         Eigen::MatrixXcd wfs(nmodes, nmodes);
         Eigen::ArrayXXd vg(3, nmodes);
+        Eigen::ArrayXXcd wigner_v(3, nmodes*nmodes);
         double value;
         double re;
         double im;
@@ -667,13 +729,18 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
                 for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
                     boost::mpi::broadcast(comm, value, 0);
                     vg(j1, j2) = value;
+                    for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
+                        boost::mpi::broadcast(comm, re, 0);
+                        boost::mpi::broadcast(comm, im, 0);
+                        wigner_v(j1, j2+nmodes*j3) = std::complex<double>(re, im);
+                    }
                 }
             }
-            nruter3->spectrum.emplace_back(omega, wfs, vg);
+            nruter3->spectrum.emplace_back(omega, wfs, vg, wigner_v);
         }
     }
     // Create an empty vector of Threeph_process objects.
-    auto nruter4 = make_unique<std::vector<Threeph_process>>();
+    auto nruter4 = alma::make_unique<std::vector<Threeph_process>>();
 
     if (my_id == 0) {
         DataSet c_dset = h5f->openDataSet("/threeph_processes/class");
@@ -793,7 +860,7 @@ std::vector<std::string> list_scattering_subgroups(
 
     // The file is only read from the process with id 0.
     if (my_id == 0) {
-        h5f = make_unique<H5File>(filename, H5F_ACC_RDONLY);
+        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDONLY);
         // Try to open the "scattering" group in the file,
         // and stop if it does not exist.
         bool found = true;
@@ -842,7 +909,7 @@ Scattering_subgroup load_scattering_subgroup(
     std::vector<std::string> groups;
 
     if (my_id == 0) {
-        h5f = make_unique<H5File>(filename, H5F_ACC_RDONLY);
+        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDONLY);
         std::string fullname{std::string("/scattering/") + groupname};
         // Open the group (the operation can fail if it does not
         // exist).
@@ -944,7 +1011,7 @@ void write_scattering_subgroup(const char* filename,
     // Processes other than ID 0 do not do anything other than wait.
     if (my_id == 0) {
         std::unique_ptr<H5File> h5f;
-        h5f = make_unique<H5File>(filename, H5F_ACC_RDWR);
+        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDWR);
         // Check if the shape of the scattering rates is compatible
         // with the crystal structure and q-point grid stored in
         // the file.

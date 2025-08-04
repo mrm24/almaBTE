@@ -23,6 +23,8 @@
 #include <memory>
 #include <limits>
 #include <algorithm>
+#include <iomanip>
+#include <limits>
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
@@ -368,6 +370,10 @@ inline std::string engineer_format(double x, bool insert_space = false) {
     std::vector<double> scaling(
         {1e-15, 1e-12, 1e-9, 1e-6, 1e-3, 1.0, 1e3, 1e6, 1e9, 1e12, 1e15});
 
+    std::stringstream result_builder;
+    constexpr auto max_precision{std::numeric_limits<double>::digits10 + 1};
+    result_builder << std::setprecision(max_precision);
+
     int idx =
         static_cast<int>(std::floor((std::log10(x) + 15.0) / (3.0 - 1e-12)));
 
@@ -378,7 +384,7 @@ inline std::string engineer_format(double x, bool insert_space = false) {
     if (idx > 9) {
         idx = 9;
     }
-    std::stringstream result_builder;
+
     result_builder << x / scaling.at(idx);
 
     if (idx != 5) { // avoid introducing blank space

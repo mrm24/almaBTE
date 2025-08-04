@@ -360,7 +360,6 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
 
     std::cout << "Writing to file " << filename << std::endl;
     std::cout << "in directory " << output_dir << std::endl;
-
     alma::save_bulk_hdf5(h5_target_file.string().c_str(),
                          filename,
                          *poscar,

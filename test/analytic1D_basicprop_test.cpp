@@ -58,7 +58,7 @@ TEST(analytic1D_basicprop_case, bulk_test) {
         // test bulk conductivity
         propCalc.setDirection(u100);
         double kappa = propCalc.getConductivity();
-        Eigen::MatrixXd kappamatrix = alma::calc_kappa(*poscar, *grid, w, T);
+        Eigen::MatrixXd kappamatrix = alma::calc_kappa(*poscar, *grid, *syms, w, T);
         Eigen::MatrixXd buffer =
             (u100.transpose()).matrix() * kappamatrix * u100.matrix();
         double kappa_ref = buffer(0);

@@ -182,7 +182,7 @@ TEST(conductivity_value_case, superlattice_builder_test) {
     Eigen::ArrayXXd w_elastic = w0_SLbarriers.array() + w0_SLdisorder.array();
     Eigen::ArrayXXd w3(alma::calc_w0_threeph(*grid, *processes, Tref, world));
     Eigen::ArrayXXd w(w3 + w_elastic);
-    Eigen::Matrix3d kappa_RTA = alma::calc_kappa(*poscar, *grid, w, Tref);
+    Eigen::Matrix3d kappa_RTA = alma::calc_kappa(*poscar, *grid, *syms, w, Tref);
 
     constexpr double kappa_target = 2.79990804;
     EXPECT_NEAR(kappa_RTA(2, 2), kappa_target, 5e-3 * kappa_target);
