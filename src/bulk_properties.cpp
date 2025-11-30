@@ -258,7 +258,7 @@ std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
     const auto nqpoints = grid.nqpoints;
     const auto nmodes = grid.get_spectrum_at_q(0).omega.size();
 
-    auto P3_denominator = static_cast<double>(
+    auto P3_factor = 1.0 / static_cast<double>(
         boost::math::pow<2>(nqpoints) * boost::math::pow<3>(nmodes));
 
     constexpr double plus_factor  = 2.0 / 3.0;
@@ -277,21 +277,21 @@ std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
 
     // Compute the contribution with the appropriate weight
     for (auto &process : processes) {
-        auto gaussian = process.compute_gaussian() / P3_denominator;
+        auto gaussian = process.compute_gaussian() * P3_factor;
         auto symmetry_weight = grid.get_cardinal(process.c);
         if (process.type == alma::threeph_type::absorption) {
             auto p3 = plus_factor * gaussian;
             nruter.first += p3 * symmetry_weight;
             my_P3plus(process.alpha[0], process.q[0])  += p3;
-            auto wp3 = process.compute_weighted_gaussian(grid, T) / nqpoints;
+            auto wp3 = process.compute_weighted_gaussian(grid, T) * P3_factor;
             nruter.second += wp3 * symmetry_weight;
             my_WP3plus(process.alpha[0], process.q[0]) += wp3;
         }
         else {
-            auto p3 = minus_factor * gaussian;
+            auto p3 = minus_factor * gaussian * P3_factor;
             nruter.first += p3 * symmetry_weight;
             my_P3minus(process.alpha[0], process.q[0])  += p3;
-            auto wp3 = process.compute_weighted_gaussian(grid, T) / nqpoints;
+            auto wp3 = process.compute_weighted_gaussian(grid, T) * P3_factor;
             nruter.second += wp3 * symmetry_weight;
             my_WP3minus(process.alpha[0], process.q[0]) += wp3;
         }
