@@ -1,10 +1,10 @@
 # Standard boilerplate.
-cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.27.0 FATAL_ERROR)
 project(ALMA CXX C)
 
-# Assume C++11 for all C++ source,
+# Assume C++17 for all C++ source,
 # and require compiler support.
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED on)
 
 # Try to find a suitable Fortran compiler to build the ShengBTE emulator.
@@ -74,12 +74,15 @@ include_directories(SYSTEM ${MPI_CXX_INCLUDE_PATH})
 string(CONCAT CMAKE_CXX_FLAGS ${MPI_CXX_COMPILE_FLAGS})
 string(CONCAT CMAKE_CXX_LINK_FLAGS ${MPI_CXX_LINK_FLAGS})
 
+# Detect OpenMP
+find_package(OpenMP REQUIRED) 
+
 # Compiler flags (currently only for g++ or clang++).
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall")
+    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS}")
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall -Wno-unused-local-typedef")
+    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS} -Wno-unused-local-typedef")
 endif()
 
 # Set up some variables so that they can be used in the code.
@@ -98,7 +101,16 @@ include_directories("${PROJECT_SOURCE_DIR}/external/randutils")
 include_directories("${PROJECT_SOURCE_DIR}/external/base-n/include")
 
 # Find some components from Boost.
-find_package(Boost COMPONENTS system filesystem mpi serialization log REQUIRED)
+if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.30")
+    find_package(Boost CONFIG REQUIRED COMPONENTS system filesystem mpi serialization log)
+    get_target_property(Boost_INCLUDE_DIR Boost::filesystem INTERFACE_INCLUDE_DIRECTORIES)
+    get_target_property(Boost_FILESYSTEM_LIB Boost::filesystem LOCATION)
+    get_filename_component(Boost_LIBRARY_DIR ${Boost_FILESYSTEM_LIB} DIRECTORY)
+else()
+    find_package(Boost REQUIRED COMPONENTS system filesystem mpi serialization log)
+endif()
+message(STATUS "Boost include directory: ${Boost_INCLUDE_DIR}")
+message(STATUS "Boost library directory: ${Boost_LIBRARY_DIR}")
 include_directories(${Boost_INCLUDE_DIR})
 link_directories(${Boost_LIBRARY_DIR})
 add_definitions(-DBOOST_LOG_DYN_LINK)
@@ -132,11 +144,12 @@ ExternalProject_Add(
   spglib
   URL file://${PROJECT_SOURCE_DIR}/external/spglib-1.9.4.tar.gz
   PREFIX external/spglib
-  CONFIGURE_COMMAND <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND1} --disable-shared --with-pic --enable-static --prefix=<INSTALL_DIR> || <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND2}  ${SPGLIB_CONFIGURE_OPTIONS} --disable-shared --enable-static --prefix=<INSTALL_DIR>
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE  
+  CONFIGURE_COMMAND <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND1} --disable-shared --with-pic --enable-static --prefix=<INSTALL_DIR> || <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND2} ${SPGLIB_CONFIGURE_OPTIONS} --disable-shared --enable-static --prefix=<INSTALL_DIR>
   BUILD_COMMAND make
   INSTALL_COMMAND make install
   BUILD_IN_SOURCE 1
-  )
+)
 # Make sure that the spglib headers and libraries are available.
 ExternalProject_Get_Property(spglib install_dir)
 include_directories(${install_dir}/include)

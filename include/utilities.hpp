@@ -23,6 +23,8 @@
 #include <memory>
 #include <limits>
 #include <algorithm>
+#include <iomanip>
+#include <limits>
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
@@ -44,6 +46,9 @@ std::unique_ptr<T> make_unique(Args&&... args) {
     return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
 }
 
+inline void string_to_lower(std::string& str) {
+    std::transform(str.begin(), str.end(), str.begin(),[](unsigned char c){return std::tolower(c);});
+}
 
 /// Comparator function object template for a container of
 /// comparable objects.
@@ -368,6 +373,10 @@ inline std::string engineer_format(double x, bool insert_space = false) {
     std::vector<double> scaling(
         {1e-15, 1e-12, 1e-9, 1e-6, 1e-3, 1.0, 1e3, 1e6, 1e9, 1e12, 1e15});
 
+    std::stringstream result_builder;
+    constexpr auto max_precision{std::numeric_limits<double>::digits10 + 1};
+    result_builder << std::setprecision(max_precision);
+
     int idx =
         static_cast<int>(std::floor((std::log10(x) + 15.0) / (3.0 - 1e-12)));
 
@@ -378,7 +387,7 @@ inline std::string engineer_format(double x, bool insert_space = false) {
     if (idx > 9) {
         idx = 9;
     }
-    std::stringstream result_builder;
+
     result_builder << x / scaling.at(idx);
 
     if (idx != 5) { // avoid introducing blank space
@@ -527,5 +536,41 @@ template <class Archive, typename S>
 void serialize(Archive& ar, Eigen::Triplet<S>& t, const unsigned int version) {
     split_free(ar, t, version);
 }
+
+/// Eigen Matrix serialization:
+
+template <class Archive>
+void serialize(Archive& ar,
+               Eigen::Matrix<double, -1, 1>& t,
+               const unsigned int version) {
+    Eigen::MatrixXd::Index rows = t.rows();
+    Eigen::MatrixXd::Index cols = t.cols();
+
+    ar& rows;
+    ar& cols;
+    // Because our matrix is dynamic we need to ensure resizing
+    if (rows * cols != t.size())
+        t.resize(rows, cols);
+
+    ar& boost::serialization::make_array(t.data(), rows * cols);
+}
+
+template <class Archive>
+void serialize(Archive& ar,
+               Eigen::Matrix<double, -1, -1>& t,
+               const unsigned int version) {
+    Eigen::MatrixXd::Index rows = t.rows();
+    Eigen::MatrixXd::Index cols = t.cols();
+
+    ar& rows;
+    ar& cols;
+    // Because our matrix is dynamic we need to ensure resizing
+    if (rows * cols != t.size())
+        t.resize(rows, cols);
+
+    ar& boost::serialization::make_array(t.data(), rows * cols);
+}
+
+
 } // namespace serialization
 } // namespace boost

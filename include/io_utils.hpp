@@ -19,6 +19,7 @@
 /// Helper code to write calculation results into external files.
 
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <algorithm>
 #include <string>
@@ -91,6 +92,10 @@ inline void write_to_csv(const std::string filename,
     }
 
     csvwriter << headermessage;
+
+    constexpr auto max_precision{std::numeric_limits<double>::digits10 + 1};
+
+    csvwriter << std::setprecision(max_precision);
 
     int Nrows = data.rows();
     int Ncols = data.cols();

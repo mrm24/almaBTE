@@ -63,6 +63,22 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
                            const Eigen::Ref<const Eigen::ArrayXXd>& w,
                            double T);
 
+/// Obtain the coherence term to the thermal conductivity
+/// See 10.1103/PhysRevX.12.041011 
+///
+/// @param[in] poscar - description of the unit cell
+/// @param[in] grid - phonon spectrum on a regular q-point grid
+/// @param[in] syms - symmetry operations object
+/// @param[in] w - scattering rates for all modes in each of
+/// the irreducible classes of q points in the grid.
+/// @param[in] T - temperature in K
+/// @return the thermal conductivity tensor in SI units
+Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
+                                     const alma::Gamma_grid& grid,
+                                     const alma::Symmetry_operations& syms,
+                                     const Eigen::Ref<const Eigen::ArrayXXd>& w,
+                                     double T);
+
 /// Obtain the small-grain thermal conductivity tensor.
 ///
 /// The small-grain thermal conductivity is defined as the value of the
@@ -73,10 +89,10 @@ Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
 /// @param[in] grid - phonon spectrum on a regular q-point grid
 /// @param[in] syms - symmetry operations object
 /// @param[in] T - temperature in K
-/// @return the small thermal conductivity tensor [W / (m K nm)]
+/// @return the small-grain thermal conductivity tensor [W / (m K nm)]
 Eigen::MatrixXd calc_kappa_sg(const alma::Crystal_structure& poscar,
                               const alma::Gamma_grid& grid,
-			      const alma::Symmetry_operations& syms,
+                              const alma::Symmetry_operations& syms,
                               double T);
 
 /// Obtain the thermal conductivity along a particular direction in the
@@ -95,4 +111,63 @@ double calc_kappa_1d(const alma::Crystal_structure& poscar,
                      const Eigen::Ref<const Eigen::ArrayXXd>& w,
                      double T,
                      const Eigen::Ref<const Eigen::Vector3d>& direction);
+
+/// Obtain the phase space and its weighted version
+///
+/// @param[in] poscar - description of the unit cell
+/// @param[in] grid - phonon spectrum on a regular q-point grid
+/// @param[in] T - temperature in K
+/// @param[in] processes  - three-phonon procesess
+/// @param[out] P3plus    - contains the mode-resolve absorption phase space in ps/rad
+/// @param[out] P3minus   - contains the mode-resolve emission phase space in ps/rad
+/// @param[out] WP3plus   - contains the mode-resolve weighted absorption phase space in ps^{4}/rad^{4}
+/// @param[out] WP3minus  - contains the mode-resolve weighted emission phase space in ps^{4}/rad^{4} 
+/// @param[in]  world     - the mpi communicator
+/// @return pair containing the total phase space (ps/rad) and the total weighted phase space (ps^{4}/rad^{4}) respectively
+std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
+                                          const alma::Gamma_grid& grid,
+                                          const double T,
+                                          std::vector<alma::Threeph_process>& processes,
+                                          Eigen::MatrixXd& P3plus,
+                                          Eigen::MatrixXd& P3minus,
+                                          Eigen::MatrixXd& WP3plus,
+                                          Eigen::MatrixXd& WP3minus,
+                                          const boost::mpi::communicator& world);
+
+/// Obtain the averaged three-phonon matrix element
+///
+/// @param[in] poscar - description of the unit cell
+/// @param[in] grid - phonon spectrum on a regular q-point grid
+/// @param[in] T - temperature in K
+/// @param[in] processes  - three-phonon procesess
+/// @param[out] P3plus    - contains the mode-resolve absorption phase space in ps/rad
+/// @param[out] P3minus   - contains the mode-resolve emission phase space in ps/rad
+/// @param[out] WP3plus   - contains the mode-resolve weighted absorption phase space in ps^{4}/rad^{4}
+/// @param[out] WP3minus  - contains the mode-resolve weighted emission phase space in ps^{4}/rad^{4}
+/// @param[in]  world     - the mpi communicator
+/// @return pair containing the total phase space (ps/rad) and the total weighted phase space (ps^{4}/rad^{4}) respectively
+std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
+                                          const alma::Gamma_grid& grid,
+                                          const double T,
+                                          std::vector<alma::Threeph_process>& processes,
+                                          Eigen::MatrixXd& P3plus,
+                                          Eigen::MatrixXd& P3minus,
+                                          Eigen::MatrixXd& WP3plus,
+                                          Eigen::MatrixXd& WP3minus,
+                                          const boost::mpi::communicator& world);
+
+/// Returns the mean of the energy allowed three-phonon processes
+///
+/// @param[in] poscar - description of the unit cell
+/// @param[in] grid - phonon spectrum on a regular q-point grid
+/// @param[in] processes  - three-phonon procesess
+/// @param[out] vp2plus   - contains the mode-resolve mean of the allowed procesess
+/// @param[in]  world     - the mpi communicator
+/// @return the mean of the three-phonon matrix elements
+double calc_anharmonicity(const alma::Crystal_structure& poscar,
+                          const alma::Gamma_grid& grid,
+                          std::vector<alma::Threeph_process>& processes,
+                          Eigen::MatrixXd& vp2,
+                          const boost::mpi::communicator& world);
+
 } // namespace alma

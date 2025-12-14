@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
         bool outputCapacity = false;
         bool superlattice = false;
         std::string superlattice_UID = "NULL";
+        bool coherence = false;
 
         std::cout << "*************************************" << std::endl;
         std::cout << "This is ALMA/kappa_Tsweep version " << ALMA_VERSION_MAJOR
@@ -157,6 +158,11 @@ int main(int argc, char** argv) {
             if (v.first == "outputHeatCapacity") {
                 outputCapacity = true;
             }
+
+            if (v.first == "computeCoherenceTerm") {
+                coherence = true;
+            }
+
         } // end XML parsing
 
         // Ensure that provided information is within expected bounds
@@ -384,6 +390,7 @@ int main(int argc, char** argv) {
 
         // Create output writer
         std::stringstream outputbuffer;
+        std::stringstream coherence_Output_Buffer;
 
         // Write file header
 
@@ -418,6 +425,19 @@ int main(int argc, char** argv) {
         }
 
         outputbuffer << std::endl;
+
+        if (coherence) {
+            if (projectConductivity) {
+                coherence_Output_Buffer << "Temp[K],kappa_c<" << uvector(0) << ","
+                    << uvector(1) << "," << uvector(2) << ">[W/m-K]";
+            }
+            else {
+                coherence_Output_Buffer << "Temp[K],kappa_c_xx[W/m-K],kappa_c_xy[W/"
+                                "m-K],kappa_c_xz[W/m-K],kappa_c_yy[W/"
+                                "m-K],kappa_c_yz[W/m-K],kappa_c_zz[W/m-K]";
+            }
+            coherence_Output_Buffer << std::endl;
+        }
 
         // RUN CALCULATIONS
 
@@ -463,6 +483,28 @@ int main(int argc, char** argv) {
                                                         T,
                                                         fullBTE_iterative,
                                                         world);
+            }
+
+            Eigen::Matrix3d kappa_coherence;
+
+            if (coherence) {
+                
+                kappa_coherence = alma::calc_kappa_coherence(*poscar, *grid, *syms, w, T);
+
+                if (projectConductivity) {
+                    Eigen::MatrixXd kappa_u = 
+                        u_norm.transpose() * kappa_coherence.matrix() * u_norm;
+                    coherence_Output_Buffer << T << "," << kappa_u(0, 0); 
+                }
+                else{
+                    coherence_Output_Buffer << T << ",";
+                    coherence_Output_Buffer << kappa_coherence(0, 0) << "," << kappa_coherence(0, 1) << ",";
+                    coherence_Output_Buffer << kappa_coherence(0, 2) << "," << kappa_coherence(1, 1) << ",";
+                    coherence_Output_Buffer << kappa_coherence(1, 2) << "," << kappa_coherence(2, 2);
+                }
+
+                coherence_Output_Buffer << std::endl;
+
             }
 
             if (projectConductivity) { // write conductivity along chosen
@@ -557,6 +599,12 @@ int main(int argc, char** argv) {
         outputwriter.open("./" + target_directory + "/" + target_filename);
         outputwriter << outputbuffer.str();
         outputwriter.close();
+
+        if (coherence) {
+            outputwriter.open("./" + target_directory + "/" + target_filename + "_coherence");
+            outputwriter << coherence_Output_Buffer.str();
+            outputwriter.close();
+        }
 
         std::cout << std::endl << "[DONE.]" << std::endl;
 

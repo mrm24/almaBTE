@@ -11,7 +11,6 @@
 
 template<typename MatrixType> void diagonal(const MatrixType& m)
 {
-  typedef typename MatrixType::Index Index;
   typedef typename MatrixType::Scalar Scalar;
 
   Index rows = m.rows();
@@ -89,7 +88,7 @@ template<typename MatrixType> void diagonal_assert(const MatrixType& m) {
   VERIFY_RAISES_ASSERT( m1.diagonal(-(rows+1)) );
 }
 
-void test_diagonal()
+EIGEN_DECLARE_TEST(diagonal)
 {
   for(int i = 0; i < g_repeat; i++) {
     CALL_SUBTEST_1( diagonal(Matrix<float, 1, 1>()) );

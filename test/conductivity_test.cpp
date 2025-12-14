@@ -80,7 +80,7 @@ TEST(conductivity_case, conductivity_test) {
             alma::calc_w0_threeph(*grid, processes, T, world));
 
         if (my_id == 0) {
-            auto kappa = alma::calc_kappa(*poscar, *grid, total_w0, T);
+            auto kappa = alma::calc_kappa(*poscar, *grid, syms, total_w0, T);
             EXPECT_TRUE(
                 alma::almost_equal(reference[pos], kappa(0, 0), 1e-6, 5e-3));
             EXPECT_TRUE(

@@ -19,7 +19,6 @@ template<typename LineType> void parametrizedline(const LineType& _line)
      ParametrizedLine.h
   */
   using std::abs;
-  typedef typename LineType::Index Index;
   const Index dim = _line.dim();
   typedef typename LineType::Scalar Scalar;
   typedef typename NumTraits<Scalar>::Real RealScalar;
@@ -111,14 +110,9 @@ template<typename Scalar> void parametrizedline_alignment()
   VERIFY_IS_APPROX(p1->origin(), p3->origin());
   VERIFY_IS_APPROX(p1->direction(), p2->direction());
   VERIFY_IS_APPROX(p1->direction(), p3->direction());
-  
-  #if defined(EIGEN_VECTORIZE) && EIGEN_MAX_STATIC_ALIGN_BYTES>0
-  if(internal::packet_traits<Scalar>::Vectorizable && internal::packet_traits<Scalar>::size<=4)
-    VERIFY_RAISES_ASSERT((::new(reinterpret_cast<void*>(array3u)) Line4a));
-  #endif
 }
 
-void test_geo_parametrizedline()
+EIGEN_DECLARE_TEST(geo_parametrizedline)
 {
   for(int i = 0; i < g_repeat; i++) {
     CALL_SUBTEST_1( parametrizedline(ParametrizedLine<float,2>()) );

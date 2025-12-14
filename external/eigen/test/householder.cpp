@@ -12,7 +12,6 @@
 
 template<typename MatrixType> void householder(const MatrixType& m)
 {
-  typedef typename MatrixType::Index Index;
   static bool even = true;
   even = !even;
   /* this test covers the following files:
@@ -134,7 +133,7 @@ template<typename MatrixType> void householder(const MatrixType& m)
   VERIFY_IS_APPROX(m3 * m5, m1); // test evaluating rhseq to a dense matrix, then applying
 }
 
-void test_householder()
+EIGEN_DECLARE_TEST(householder)
 {
   for(int i = 0; i < g_repeat; i++) {
     CALL_SUBTEST_1( householder(Matrix<double,2,2>()) );

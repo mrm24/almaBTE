@@ -348,6 +348,18 @@ int main(int argc, char** argv) {
                   << std::endl;
         env.abort(1);
     }
+    // Read in the flag namelist and check for unsupported features.
+    auto flags = read_sheng_flags();
+    if (flags.nanowires) {
+        std::cerr << "Error: nanowire calculations are not implemented"
+                  << std::endl;
+        env.abort(1);
+    }
+    if (flags.espresso) {
+        std::cerr << "Error: Quantum ESPRESSO support is not implemented"
+                  << std::endl;
+        env.abort(1);
+    }
     // Read in all the information about atoms and elements.
     int na;
     int nb;
@@ -410,9 +422,9 @@ int main(int argc, char** argv) {
         boost::trim(e);
     }
     std::vector<double> masses(allocations.nelements);
-    read_sheng_masses(&allocations, masses.data());
+    if (!flags.autoisotopes) read_sheng_masses(&allocations, masses.data());
     std::vector<double> gfactors(allocations.nelements);
-    read_sheng_gfactors(&allocations, gfactors.data());
+    if (!flags.autoisotopes) read_sheng_gfactors(&allocations, gfactors.data());
     // Check that the types vector is compatible with alma and
     // convert it to a numbers vector.
     bool types_valid = true;
@@ -439,18 +451,6 @@ int main(int argc, char** argv) {
             ++j;
         }
         ++numbers[j];
-    }
-    // Read in the flag namelist and check for unsupported features.
-    auto flags = read_sheng_flags();
-    if (flags.nanowires) {
-        std::cerr << "Error: nanowire calculations are not implemented"
-                  << std::endl;
-        env.abort(1);
-    }
-    if (flags.espresso) {
-        std::cerr << "Error: Quantum ESPRESSO support is not implemented"
-                  << std::endl;
-        env.abort(1);
     }
     // Read in the parameters namelist and perform some last checks.
     auto parameters = read_sheng_parameters();
@@ -505,6 +505,7 @@ int main(int argc, char** argv) {
     // And obtain the spectrum
     std::cout << "Info: about to obtain the spectrum" << std::endl;
     std::cout << "Info: expecting Phonopy 2nd-order format" << std::endl;
+    std::cout << "Info: polar material = " << flags.nonanalytic << std::endl;
     std::unique_ptr<alma::Gamma_grid> grid;
     if (flags.nonanalytic) {
         auto dielectric =
@@ -513,6 +514,7 @@ int main(int argc, char** argv) {
                                                    syms,
                                                    *ifcs,
                                                    *dielectric,
+						   alma::nonanalytic_treatment::wang,
                                                    allocations.ngrid[0],
                                                    allocations.ngrid[1],
                                                    allocations.ngrid[2]);
@@ -798,8 +800,7 @@ int main(int argc, char** argv) {
             f101 << T << " ";
             f101 << std::scientific << std::setprecision(5);
             f101 << std::setw(14) << cv << std::endl;
-            auto kappa_sg = alma::calc_kappa_sg(*poscar, *grid, T);
-            kappa_sg = syms.symmetrize_m<double>(kappa_sg, true);
+            auto kappa_sg = alma::calc_kappa_sg(*poscar, *grid, syms, T);
             std::ofstream f2("BTE.kappa_sg");
             f2 << std::scientific;
             f2 << std::setprecision(5);

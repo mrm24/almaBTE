@@ -237,18 +237,18 @@ template <class T> class General_harmonic_ifcs {
 public:
     /// Coordinates of each unit cell for which constants
     /// are available.
-    const std::vector<Triple_int> pos;
+    std::vector<Triple_int> pos;
     /// Force constants between unit cell 0 and each unit cell.
-    const std::vector<T> ifcs;
+    std::vector<T> ifcs;
     /// Dimension of the supercell originally used for the IFC
     /// calculations along the first axis.
-    const int na;
+    int na;
     /// Dimension of the supercell originally used for the IFC
     /// calculations along the second axis.
-    const int nb;
+    int nb;
     /// Dimension of the supercell originally used for the IFC
     /// calculations along the third axis.
-    const int nc;
+    int nc;
     /// Basic constructor.
     General_harmonic_ifcs(std::vector<Triple_int> _pos,
                           std::vector<T> _ifcs,
@@ -263,6 +263,23 @@ public:
     // Return the number of unit cells.
     inline std::vector<std::string>::size_type get_ncells() const {
         return this->pos.size();
+    }
+private:
+    friend class boost::serialization::access;
+    /// Serialize the data needed to reconstruct an
+    /// object of this class.
+    ///
+    /// @param[in,out] ar - an output archive
+    /// @param[in] version - version number used
+    /// internally by boost::serialization
+    template<class Archive>
+    void serialize(Archive & ar, const unsigned int version)
+    {
+        ar & pos;
+        ar & ifcs;
+        ar & na;
+        ar & nb;
+        ar & nc;
     }
 };
 
@@ -373,15 +390,15 @@ public:
 class Thirdorder_ifcs {
 public:
     /// Cartesian coordinates of the second unit cell.
-    const Eigen::VectorXd rj;
+    Eigen::VectorXd rj;
     /// Cartesian coordinates of the third unit cell.
-    const Eigen::VectorXd rk;
+    Eigen::VectorXd rk;
     /// Index of the first atom.
-    const std::size_t i;
+    std::size_t i;
     /// Index of the second atom.
-    const std::size_t j;
+    std::size_t j;
     /// Index of the third atom.
-    const std::size_t k;
+    std::size_t k;
     /// Access a particular ifc using three indexes.
     ///
     /// Note that all indices must be positive and lower than 3,
@@ -409,6 +426,8 @@ public:
         return this->ifcs[gamma + 3 * (beta + 3 * alpha)];
     }
 
+    /// Default constructor
+    Thirdorder_ifcs() = default;
 
     /// Basic constructor. It does not initialize the ifcs
     /// member variable.
@@ -420,9 +439,32 @@ public:
         : rj(std::move(_rj)), rk(std::move(_rk)), i(_i), j(_j), k(_k) {
     }
 
+    /// Swap the ifcs from a given array to the class ones
+    /// @param[inout] ifcs_ - ifcs to copy 
+    void swap_block(std::array<double, 27>& ifcs_) {
+        std::swap(this->ifcs, ifcs_);
+    }
 
 private:
     /// All third-order force constants between the three atoms.
     std::array<double, 27> ifcs;
+
+    friend class boost::serialization::access;
+    /// Serialize the data needed to reconstruct an
+    /// object of this class.
+    ///
+    /// @param[in,out] ar - an output archive
+    /// @param[in] version - version number used
+    /// internally by boost::serialization
+    template<class Archive>
+    void serialize(Archive & ar, const unsigned int version)
+    {
+        ar & rj;
+        ar & rk;
+        ar & i;
+        ar & j;
+        ar & k;
+        ar & ifcs;
+    }
 };
 } // namespace alma

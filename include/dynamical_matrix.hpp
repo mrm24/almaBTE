@@ -54,6 +54,11 @@ private:
         ar << rows;
         ar << cols;
         ar << boost::serialization::make_array(this->vg.data(), rows * cols);
+        rows = this->wigner_v.rows();
+        cols = this->wigner_v.cols();
+        ar << rows;
+        ar << cols;
+        ar << boost::serialization::make_array(this->wigner_v.data(), rows * cols);
     }
 
 
@@ -78,6 +83,10 @@ private:
         ar >> cols;
         this->vg.resize(rows, cols);
         ar >> boost::serialization::make_array(this->vg.data(), rows * cols);
+        ar >> rows;
+        ar >> cols;
+        this->wigner_v.resize(rows, cols);
+        ar >> boost::serialization::make_array(this->wigner_v.data(), rows * cols);
     }
 
 
@@ -93,11 +102,14 @@ public:
     Eigen::MatrixXcd wfs;
     /// Cartesian components of the group velocities in km / s.
     Eigen::ArrayXXd vg;
+    /// Cartesian components of the more general Wigner velocity matrix in km / s
+    Eigen::ArrayXXcd wigner_v;
     /// Basic constructor.
     Spectrum_at_point(const Eigen::Ref<const Eigen::ArrayXd>& _omega,
                       const Eigen::Ref<const Eigen::MatrixXcd>& _wfs,
-                      const Eigen::Ref<const Eigen::ArrayXXd>& _vg)
-        : omega(_omega), wfs(_wfs), vg(_vg) {
+                      const Eigen::Ref<const Eigen::ArrayXXd>& _vg,
+                      const Eigen::Ref<const Eigen::ArrayXXcd>& _wigner_v)
+        : omega(_omega), wfs(_wfs), vg(_vg), wigner_v(_wigner_v) {
     }
 
 
@@ -105,6 +117,30 @@ public:
     Spectrum_at_point() {
     }
 };
+
+/// POD class representing a pair of atoms - one in unit cell (0, 0,
+/// 0) the other in an arbitrary unit cell cj, and the image of the
+/// latter in a number of unit cells cjp.
+class Atom_pair {
+public:
+    /// Index of the first atom in its unit cell.
+    int i;
+    /// Index of the second atom in its unit cell.
+    int j;
+    /// Unit cell the second atom belongs to in a regular
+    /// supercell representation.
+    Triple_int cj;
+    /// All unit cells that the image of the second atom
+    /// belongs to in a Wigner-Seitz supercell representation.
+    std::vector<Triple_int> cjp;
+};
+
+// Enumerator representing the method of non-analytical term correction
+// - wang  : J. Phys.: Condens. Matter. 22, 202201 (2010)
+// - gonze : Phys. Rev. B 55, 10355 (1997)
+enum class nonanalytic_treatment {none = -1, wang = 0, gonze = 1};
+// Print for the enum class
+std::ostream& operator<<(std::ostream& os, const nonanalytic_treatment& method);
 
 /// Factory of Dynamical_matrix objects.
 class Dynamical_matrix_builder {
@@ -117,7 +153,8 @@ public:
     Dynamical_matrix_builder(const Crystal_structure& _structure,
                              const Symmetry_operations& syms,
                              const Harmonic_ifcs& fcs,
-                             const Dielectric_parameters& born);
+                             const Dielectric_parameters& born, 
+			                 const nonanalytic_treatment nonanalytic_method);
     /// Return the dynamical matrix and its derivatives
     /// at one point.
     ///
@@ -206,13 +243,14 @@ private:
     /// True if the Coulomb nonanalytic correction is taken into
     /// account.
     const bool nonanalytic;
+    /// The method to compute the nonanalytic correction
+    const nonanalytic_treatment nonanalytic_method;
     /// Dielectric parameters required for the nonanalytic
     /// correction.
     const Dielectric_parameters born;
     /// Populate the "blocks" member variable using the data
     /// provided to the constructor.
     ///
-    /// @param[in] structure - a description of the unit cell
     /// @param[in] fcs - an object containing the IFCs
     /// for a supercell
     void copy_blocks(const Harmonic_ifcs& fcs);
@@ -226,13 +264,40 @@ private:
         const Eigen::Ref<const Eigen::Vector3d>& q) const;
 
     /// Return the nonanalytic part of the dynamical matrix and
-    /// its derivatives at one point.
+    /// its derivatives at one point. It uses Wang method (see 
+    /// J. Phys.: Condens. Matter. 22, 202201 (2010))
+    ///
+    /// @param[in] q - the q point in Cartesian coordinates
+    /// @return an array containing the long-range contribution to
+    /// the force constants and the three components of
+    /// its gradient. 
+    std::array<Eigen::ArrayXXcd, 4> build_nac_wang(
+        const Eigen::Ref<const Eigen::Vector3d>& q) const;
+
+    /// Return the nonanalytic part of the dynamical matrix and
+    /// its derivatives at one point using Gonze's algorithm
+    /// (see Eq. 75 of 10.1103/PhysRevB.55.10355). The sigma 
+    /// factor is computed to be moreless coherent with that of
+    /// QE and ShengBTE.
     ///
     /// @param[in] q - the q point in Cartesian coordinates
     /// @return an array containing the long-range contribution to
     /// the force constants and the three components of
     /// its gradient.
-    std::array<Eigen::ArrayXXd, 4> build_nac(
+    std::array<Eigen::ArrayXXcd, 4> build_nac_gonze(
         const Eigen::Ref<const Eigen::Vector3d>& q) const;
+
+    /// Removes the dipole-dipole interaction from the 
+    /// interatomic force constants using Gonze's method.
+    /// See 10.1103/PhysRevB.55.10355 for a better description 
+    /// of the method. To summarize, the dipole-dipole (DD) correction
+    /// is computed in the commensurate points, then the DD IFCs
+    /// are computed, and substracted from the supercell IFCs.
+    ///
+    /// @param[in] fcs - an object containing the IFCs 
+    /// @param[in] pairs - list of atomic pairs in the supercell
+    void remove_dipole_dipole(const Harmonic_ifcs& fcs,
+                              std::vector<Atom_pair>& pairs);
+
 };
 } // namespace alma

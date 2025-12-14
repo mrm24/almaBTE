@@ -38,11 +38,11 @@ TEST(kappa_sg_case, kappa_sg_test) {
     auto born = alma::load_BORN(born_path.string().c_str());
 
     auto grid = alma::make_unique<alma::Gamma_grid>(
-        *poscar, syms, *force_constants, *born, 12, 12, 12);
+        *poscar, syms, *force_constants, *born, alma::nonanalytic_treatment::wang, 12, 12, 12);
 
     grid->enforce_asr();
 
-    Eigen::Matrix3d kappa_sg = alma::calc_kappa_sg(*poscar, *grid, 300.);
+    Eigen::Matrix3d kappa_sg = alma::calc_kappa_sg(*poscar, *grid, syms, 300.);
 
     EXPECT_TRUE(alma::almost_equal(1.75453, kappa_sg(0, 0), 1e-2));
     EXPECT_TRUE(alma::almost_equal(2.12192, kappa_sg(2, 2), 1e-2));

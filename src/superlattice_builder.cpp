@@ -35,7 +35,11 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <boost/iostreams/stream_buffer.hpp>
 #include <boost/iostreams/device/null.hpp>
+#if BOOST_VERSION >= 107100
+#include <boost/uuid/detail/sha1.hpp>
+#else
 #include <boost/uuid/sha1.hpp>
+#endif
 #include <boost/endian/conversion.hpp>
 #include <Eigen/Dense>
 #include <basen.hpp>
@@ -70,6 +74,8 @@ int gridDensityA;
 int gridDensityB;
 // number of wavevector points along C-axis
 int gridDensityC;
+// Scalebroad
+double scalebroad = 0.1;
 // root directory
 std::string materials_repository = ".";
 // target directory
@@ -90,6 +96,8 @@ std::size_t nqline;
 bool do3ph = true;
 // overwrite H5 if file already exists?
 bool overwrite = false;
+// NAC method. The default is the Wang method.
+alma::nonanalytic_treatment nonanalytic_method = alma::nonanalytic_treatment::wang;
 ////////////////////////////////////////////
 
 
@@ -122,27 +130,45 @@ std::string get_strprofile(const std::vector<double>& input) {
 /// @return the identifier as a string
 std::string get_uid(const std::vector<double>& input) {
     std::remove_reference<boost::uuids::detail::sha1::digest_type>::type digest;
+#if BOOST_VERSION >= 108600  // Boost 1.86 or higher
+    // For Boost 1.86 or higher, digest type is likely 1 byte per element
+    static_assert(sizeof(digest[0]) == 1u,
+                  "expected each element of "
+                  "boost::uuids::detail::sha1::digest_type to take 1 byte");
+#else
+    // For older Boost versions, assume 4 bytes per element
     static_assert(sizeof(digest[0]) == 4u,
                   "expected each element of "
-                  "boost::uuids::detail::sha1::digest_"
-                  "type to take 4 bytes");
+                  "boost::uuids::detail::sha1::digest_type to take 4 bytes");
+#endif
     // Convert the input to a comma-separated list.
     auto strprofile = get_strprofile(input);
     // Compute a binary version of its SHA1 hash.
     boost::uuids::detail::sha1 hasher;
     hasher.process_bytes(strprofile.c_str(), strprofile.size());
     hasher.get_digest(digest);
+
 // Force a single standard endianess.
 #ifdef BOOST_LITTLE_ENDIAN
-
+#if BOOST_VERSION >= 108600
+    // I manually reverse the bytes. Probably there is a better way of doing it
+    for (auto i = 0; i < 5; ++i) {
+        std::swap(digest[i * 4 + 0], digest[i * 4 + 3]);
+        std::swap(digest[i * 4 + 1], digest[i * 4 + 2]);
+    }
+#else
     for (auto i = 0; i < 5; ++i) {
         digest[i] = boost::endian::endian_reverse(digest[i]);
     }
+#endif
 #endif
 
     // Convert the hash to a string of (possibly non printable) bytes.
     strprofile = "";
 
+#if BOOST_VERSION >= 108600
+    strprofile = std::string(reinterpret_cast<const char*>(digest), 20);
+#else
     for (auto i = 0; i < 5; ++i) {
         char* tmp = reinterpret_cast<char*>(digest + i);
 
@@ -150,6 +176,7 @@ std::string get_uid(const std::vector<double>& input) {
             strprofile += tmp[j];
         }
     }
+#endif
     // Encode the result in base 32.
     std::string encoded;
     bn::encode_b32(
@@ -157,7 +184,6 @@ std::string get_uid(const std::vector<double>& input) {
     // And return a subset of that hash.
     return encoded.substr(0, 8);
 }
-
 
 int main(int argc, char** argv) {
     // Initialize MPI.
@@ -250,6 +276,24 @@ int main(int argc, char** argv) {
         }
         else if (v.first == "overwrite") {
             overwrite = true;
+        }
+
+        else if (v.first == "broadening") {
+            scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
+        }
+
+        else if (v.first == "nonanalytic_treatment") {
+            std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
+            alma::string_to_lower(my_nac);
+            if (my_nac.find("gonze") != std::string::npos) {
+                nonanalytic_method = alma::nonanalytic_treatment::gonze;
+            }
+            else if (my_nac.find("wang") != std::string::npos) {
+                nonanalytic_method = alma::nonanalytic_treatment::wang;
+            }
+            else {
+                throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
+            }
         }
 
         else if (v.first != "<xmlcomment>") {
@@ -523,7 +567,7 @@ int main(int argc, char** argv) {
     // Objects required to compute the spectrum.
     auto syms = alma::Symmetry_operations(*vc_poscar);
     auto factory = polar ? alma::make_unique<alma::Dynamical_matrix_builder>(
-                               *vc_poscar, syms, *vc_ifcs, *vc_born)
+                               *vc_poscar, syms, *vc_ifcs, *vc_born, nonanalytic_method)
                          : alma::make_unique<alma::Dynamical_matrix_builder>(
                                *vc_poscar, syms, *vc_ifcs);
 
@@ -532,6 +576,7 @@ int main(int argc, char** argv) {
                                                             syms,
                                                             *vc_ifcs,
                                                             *vc_born,
+                                                            nonanalytic_method,
                                                             gridDensityA,
                                                             gridDensityB,
                                                             gridDensityC)
@@ -552,10 +597,11 @@ int main(int argc, char** argv) {
 
     if (do3ph) {
         std::cout << "Performing three-phonon calculations" << std::endl;
+        std::cout << "Using scalebroad = " << scalebroad << std::endl;
         auto vc_thirdorder = alma::vc_mix_thirdorder_ifcs(
             {*(IFC3_ptrs.front()), *(IFC3_ptrs.back())}, {x1st, x2nd});
         processes = alma::make_unique<std::vector<alma::Threeph_process>>(
-            alma::find_allowed_threeph(*grid, world, 0.1));
+            alma::find_allowed_threeph(*grid, world, scalebroad));
 
         for (auto& p : *processes) {
             p.compute_gaussian();
