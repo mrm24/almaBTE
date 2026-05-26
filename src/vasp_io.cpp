@@ -155,10 +155,11 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
     int field;
     std::string line;
     Triple_int_map<Eigen::MatrixXd> matrices;
+    std::cout <<  ntot[0] << '\t' << ntot[1] << std::endl;
     auto builder1 = format == force_constants_format::new_compact ? 
-	    	    Supercell_index_builder(1, 1, 1, ntot[0]) : 
-		    Supercell_index_builder(na, nb, nc, ntot[0]);
-    auto builder2 = Supercell_index_builder(na, nb, nc, ntot[1]);
+	    	    Supercell_index_builder(1, 1, 1, natoms) : 
+		    Supercell_index_builder(na, nb, nc, natoms);
+    auto builder2 = Supercell_index_builder(na, nb, nc, natoms);
 
     for (auto i = 0; i < ntot[0]; ++i) {
         for (auto j = 0; j < ntot[1]; ++j) {
@@ -172,6 +173,11 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
             // If there is anything else in the line, discard it.
             std::string tmp;
             std::getline(f, tmp);
+
+            std::cout << i << '\t' << j << std::endl;
+            std::cout << index1.ia << '\t' << index1.ib << '\t' << index1.ic << std::endl;
+            std::cout << index2.ia << '\t' << index2.ib << '\t' << index2.ic << std::endl;
+            std::cout << "IDXS: " << index1.iatom << '\t' << index2.iatom << std::endl;
 
             if ((index1.ia == 0) && (index1.ib == 0) && (index1.ic == 0)) {
                 // The first unit cell is (0, 0, 0). Read and store
@@ -345,4 +351,78 @@ std::unique_ptr<std::vector<Thirdorder_ifcs>> load_FORCE_CONSTANTS_3RD(
     }
     return nruter;
 }
+
+
+std::unique_ptr<std::vector<Fourthorder_ifcs>> load_FORCE_CONSTANTS_4TH(
+    const char* filename,
+    const Crystal_structure& cell) {
+    std::ifstream f(filename);
+
+    if (!f) {
+        throw value_error("could not open file");
+    }
+    auto solver = cell.lattvec.colPivHouseholderQr();
+    // The first line is the number of blocks in the file.
+    std::size_t nblocks;
+    f >> nblocks;
+    auto nruter = make_unique<std::vector<Fourthorder_ifcs>>();
+    nruter->reserve(nblocks);
+
+    // For each block.
+    for (decltype(nblocks) iblock = 0; iblock < nblocks; ++iblock) {
+        std::size_t tmp;
+        // Read the block number and complain if it does not
+        // match our expectations.
+        f >> tmp;
+
+        if (tmp != iblock + 1)
+            throw value_error("wrong block number");
+        // Read the Cartesian coordinates of the second unit cell.
+        Eigen::VectorXd rj(3);
+        f >> rj(0) >> rj(1) >> rj(2);
+        // Read the Cartesian coordinates of the third unit cell.
+        Eigen::VectorXd rk(3);
+        f >> rk(0) >> rk(1) >> rk(2);
+        // Read the Cartesian coordinates of the fourth unit cell.
+        Eigen::VectorXd rl(3);
+        f >> rl(0) >> rl(1) >> rl(2);
+        // Convert these coordinates to nm and
+        // round each vector to the closest unit cell.
+        Eigen::VectorXd solj = solver.solve(rj / 10.);
+        Eigen::VectorXd solk = solver.solve(rk / 10.);
+        Eigen::VectorXd soll = solver.solve(rl / 10.);
+
+        for (auto ic = 0; ic < 3; ++ic) {
+            solj(ic) = std::round(solj(ic));
+            solk(ic) = std::round(solk(ic));
+            soll(ic) = std::round(soll(ic));
+        }
+        rj = cell.lattvec * solj;
+        rk = cell.lattvec * solk;
+        rl = cell.lattvec * soll;
+        // The next line contains the four atom indices.
+        std::size_t i;
+        std::size_t j;
+        std::size_t k;
+        std::size_t l;
+        f >> i >> j >> k >> l;
+        // Create an empty Thirdorder_ifcs object.
+        Fourthorder_ifcs block(rj, rk, rl, i - 1, j - 1, k - 1, l -1);
+
+        // And read the contents of the 81 remaining lines to fill
+        // in the values of the ifcs.
+        for (auto ic = 0; ic < 81; ++ic) {
+            int p1;
+            int p2;
+            int p3;
+            int p4;
+            f >> p1 >> p2 >> p3 >> p4;
+            f >> block.ifc(p1 - 1, p2 - 1, p3 - 1, p4 - 1);
+        }
+        // Add the new block to the vector.
+        nruter->emplace_back(block);
+    }
+    return nruter;
+}
+
 } // namespace alma

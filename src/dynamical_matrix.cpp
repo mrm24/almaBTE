@@ -246,33 +246,8 @@ void Dynamical_matrix_builder::remove_dipole_dipole(const Harmonic_ifcs& fcs,
 	    // Note that the mass factor is not needed
             blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) = 
                 fc_ij.real().array() / p.cjp.size();
-
-	    // std::cout << p.i << '\t' << p.j << '\t' << pp[0] << '\t' << pp[1] << '\t' << pp[2] << '\t' << p.cjp.size() << std::endl;
-	    // std::cout << blocks[pp].block<3, 3>(3 * p.i, 3 * p.j) / (constants::e / constants::amu * 1e-4) << std::endl;
-
         }
     }
-
-    // exit(1);
-
-    /*
-    // TESTING if equal when not substracting the LR from the SR dynmat
-    // RESULT: works
-    // std::size_t ib = 0;
-    // for (auto &[pos,block] : blocks) {
-    //     std::cout << "#block " <<  ib << std::endl;
-    //     for (auto iat=0; iat < natoms; iat++) for (auto jat=0; jat < natoms; jat++) for (auto a=0; a<3; a++) for (auto b=0; b<3; b++) {
-    //         auto old_ = this->blocks.at(ib)(3*iat+a,3*jat+b);
-    //         auto mm   = this->masks.at(ib)(3*iat+a,3*jat+b);
-    //         auto new_ = block(3*iat+a,3*jat+b);
-    //         if (almost_equal(old_,0.0) and almost_equal(new_,0.0)) continue;
-    //         if (!almost_equal(old_ - new_,0.0))
-    //             std::cout << iat << '\t' << a << '\t' << jat << '\t' << b << '\t' << old_ << '\t' << new_ << '\t' << mm << std::endl;
-    //     }
-    //     ib++;
-    // }
-    // exit(1);
-    */
 
     // Overwrite the original force constants
     // with the short range ones
@@ -598,12 +573,6 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     }
 
     Eigen::MatrixXd qbzs = this->structure.map_to_firstbz(q);
-
-    /*if (omega.minCoeff() < 0.0) {
-        std::cout << "negative" << std::endl;
-        std::cout << 16 * (this->structure.rlattvec.inverse() * q).transpose() << '\t' << qbzs.col(0).norm() << std::endl;
-        std::cout << omega.transpose() << std::endl << std::endl;
-    }*/
 
     /// Build Wigner velocities. See 10.1103/PhysRevX.12.041011 
     /// for the theoretical framework.

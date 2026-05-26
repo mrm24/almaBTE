@@ -37,7 +37,14 @@ namespace alma {
 // Forward declarations placed here for convenience.
 class Symmetry_operations;
 class Gamma_grid;
-class Threeph_process;
+
+/// Three phonon process type (emission or absorption).
+enum class threeph_type : int;
+/// Four phonon process type
+enum class fourph_type : int;
+template<std::size_t N, class process_type> class ph_process;
+using Threeph_process = ph_process<3, threeph_type>;
+using Fourph_process  = ph_process<4, fourph_type>;
 
 /// Convenient shorthand for an array of three ints.
 using Triple_int = std::array<int, 3>;
@@ -249,7 +256,7 @@ public:
     /// Dimension of the supercell originally used for the IFC
     /// calculations along the third axis.
     int nc;
-    /// Basic constructor.
+    /// Basic constructor
     General_harmonic_ifcs(std::vector<Triple_int> _pos,
                           std::vector<T> _ifcs,
                           int _na,
@@ -300,8 +307,6 @@ public:
                           Eigen::Matrix3d _epsilon)
         : born(std::move(_born)), epsilon(std::move(_epsilon)) {
     }
-
-
     /// Default constructor. Create an empty object.
     Dielectric_parameters() {
     }
@@ -369,7 +374,7 @@ public:
     /// single integer.
     Supercell_index create_index_safely(const int index) const;
 
-    /// Perform a bounds check and create a Supercell_index from
+    /// Perform a bounds check and create a ../include/structures.hppSupercell_index from
     /// four integers.
     Supercell_index create_index_safely(const int ia,
                                         const int ib,
@@ -378,7 +383,7 @@ public:
 };
 
 /// Class representing the anharmonic (third-order)
-/// interaction between two atoms atoms.
+/// interaction between two atoms.
 ///
 /// Note that, since third-order IFCs tend to be expressed
 /// in sparse formats, it is more natural to store each tensor
@@ -401,7 +406,7 @@ public:
     std::size_t k;
     /// Access a particular ifc using three indexes.
     ///
-    /// Note that all indices must be positive and lower than 3,
+    /// Note that all indices must atoms be positive and lower than 3,
     /// but that this condition is not checked.
     /// @param[in] alpha - first axis index
     /// @param[in] beta - second axis index
@@ -440,12 +445,15 @@ public:
     }
 
     /// Swap the ifcs from a given array to the class ones
-    /// @param[inout] ifcs_ - ifcs to copy 
+    /// @param[inout] ifcs_ - ifcs to copy
     void swap_block(std::array<double, 27>& ifcs_) {
         std::swap(this->ifcs, ifcs_);
     }
 
 private:
+
+    /// Swap the ifcs from a given array to the class ones
+    /// @param[inout] iatoms
     /// All third-order force constants between the three atoms.
     std::array<double, 27> ifcs;
 
@@ -467,4 +475,106 @@ private:
         ar & ifcs;
     }
 };
+
+/// Class representing the anharmonic (fourth-order)
+/// interaction between three atoms.
+///
+/// NOTE(mrm24): Should I make it derive from the 3rd one?
+///
+/// The first atom, i, is always assumed to be part of the first
+/// unit cell, that is, R_i = {0., 0., 0.}.
+class Fourthorder_ifcs {
+public:
+    /// Cartesian coordinates of the second unit cell.
+    Eigen::VectorXd rj;
+    /// Cartesian coordinates of the third unit cell.
+    Eigen::VectorXd rk;
+    /// Cartesian coordinates of the fourth unit cell.
+    Eigen::VectorXd rl;
+    /// Index of the first atom.
+    std::size_t i;
+    /// Index of the second atom.
+    std::size_t j;
+    /// Index of the third atom.
+    std::size_t k;
+    /// Index of the fourth atom.
+    std::size_t l;
+
+    /// Access a particular ifc using three indexes.
+    ///
+    /// Note that all indices must be positive and lower than 3,
+    /// but that this condition is not checked.
+    /// @param[in] alpha - first axis index
+    /// @param[in] beta - second axis index
+    /// @param[in] gamma - third axis index
+    /// @param[in] theta - fourth axis index
+    /// @return a mutable reference to the element
+    double& ifc(std::size_t alpha, std::size_t beta, std::size_t gamma, std::size_t theta) {
+        return this->ifcs[theta + 3 * (gamma + 3 * (beta + 3 * alpha))];
+    }
+
+
+    /// Access a particular ifc using four indexes.
+    ///
+    /// Note that all indices must be positive and lower than 3,
+    /// but that this condition is not checked.
+    /// @param[in] alpha - first axis index
+    /// @param[in] beta - second axis index
+    /// @param[in] gamma - third axis index
+    /// @param[in] theta - fourth axis index
+    /// @return a const reference to the element
+    const double& ifc(std::size_t alpha,
+                      std::size_t beta,
+                      std::size_t gamma,
+                      std::size_t theta) const {
+        return this->ifcs[theta + 3 * (gamma + 3 * (beta + 3 * alpha))];
+    }
+
+    /// Default constructor
+    Fourthorder_ifcs() = default;
+
+    /// Basic constructor. It does not initialize the ifcs
+    /// member variable.
+    Fourthorder_ifcs(const Eigen::VectorXd& _rj,
+                    const Eigen::VectorXd& _rk,
+                    const Eigen::VectorXd& _rl,
+                    std::size_t _i,
+                    std::size_t _j,
+                    std::size_t _k,
+                    std::size_t _l)
+        : rj(std::move(_rj)), rk(std::move(_rk)), rl(std::move(_rl)), i(_i), j(_j), k(_k), l(_l) {
+    }
+
+    /// Swap the ifcs from a given array to the class ones
+    /// @param[inout] ifcs_ - ifcs to copy 
+    void swap_block(std::array<double, 81>& ifcs_) {
+        std::swap(this->ifcs, ifcs_);
+    }
+
+private:
+    /// All fourth-order force constants between the four atoms.
+    std::array<double, 81> ifcs;
+
+    friend class boost::serialization::access;
+    /// Serialize the data needed to reconstruct an
+    /// object of this class.
+    ///
+    /// @param[in,out] ar - an output archive
+    /// @param[in] version - version number used
+    /// internally by boost::serialization
+    template<class Archive>
+    void serialize(Archive & ar, const unsigned int version)
+    {
+        ar & rj;
+        ar & rk;
+        ar & rl;
+        ar & i;
+        ar & j;
+        ar & k;
+        ar & l;
+        ar & ifcs;
+    }
+};
+
+
 } // namespace alma

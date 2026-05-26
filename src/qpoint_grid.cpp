@@ -368,6 +368,37 @@ std::vector<std::array<std::size_t, 3>> Gamma_grid::equivalent_qtriplets(
                                                    unique.end());
 }
 
+std::vector<std::array<std::size_t, 4>> Gamma_grid::equivalent_qquartet(
+    const std::array<std::size_t, 4>& original) const {
+    auto iq1 = original[0];
+    auto iq2 = original[1];
+    auto iq3 = original[2];
+    auto iq4 = original[3];
+
+    if ((iq1 >= this->nqpoints) || (iq2 >= this->nqpoints) ||
+        (iq3 >= this->nqpoints) || (iq4 >= this->nqpoints))
+        throw value_error("invalid q point index");
+
+    std::unordered_set<std::array<std::size_t, 4>> unique;
+
+    // Loop over the images of all three q points looking
+    // for all unique equivalent triplets.
+    for (std::size_t i = 0; i < this->symmetry_map[0].size(); ++i) {
+        auto jq1 = this->symmetry_map[iq1][i];
+        auto jq2 = this->symmetry_map[iq2][i];
+        auto jq3 = this->symmetry_map[iq3][i];
+        auto jq4 = this->symmetry_map[iq4][i];
+        std::array<std::size_t, 4> candidate({{jq1, jq2, jq3, jq4}});
+        if (jq1 < this->nqpoints && jq2 < this->nqpoints &&
+            jq3 < this->nqpoints && jq4 < this->nqpoints) {
+            unique.emplace(candidate);
+        }
+    }
+
+    return std::vector<std::array<std::size_t, 4>>(unique.begin(),
+                                                   unique.end());
+}
+
 
 std::vector<Triangle> Gamma_grid::get_triangles(std::size_t ia) const {
     std::vector<Triangle> triangles;

@@ -236,6 +236,15 @@ public:
     std::vector<std::array<std::size_t, 3>> equivalent_qtriplets(
         const std::array<std::size_t, 3>& original) const;
 
+    /// Find all q-point quartets equivalent to the input.
+    ///
+    /// Given a quartet of indices, obtain all equivalent quartets
+    /// after looking the up in the symmetry_map.
+    /// @param[in] a quartet of q point indices
+    /// @return a vector of quartet, including the input
+    std::vector<std::array<std::size_t, 4>> equivalent_qquartet(
+        const std::array<std::size_t, 4>& original) const;
+
 
     /// Decompose the q-th microcell in five tetrahedra.
     ///

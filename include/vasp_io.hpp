@@ -79,4 +79,18 @@ std::unique_ptr<Dielectric_parameters> load_BORN(const char* filename);
 std::unique_ptr<std::vector<Thirdorder_ifcs>> load_FORCE_CONSTANTS_3RD(
     const char* filename,
     const Crystal_structure& cell);
+
+/// Create a std::vector of Fourthorder_ifcs objects from a
+/// FORCE_CONSTANTS_4TH file.
+///
+/// The format of the file is described in the ShengBTE
+/// documentation.
+/// @param[in] filename - path to the BORN file
+/// @param[in] cell - description of the unit cell
+/// @return a std::vector of Thirdorder_ifcs objects containing all
+/// the information in the file.
+std::unique_ptr<std::vector<Fourthorder_ifcs>> load_FORCE_CONSTANTS_4TH(
+    const char* filename,
+    const Crystal_structure& cell);
+
 } // namespace alma
