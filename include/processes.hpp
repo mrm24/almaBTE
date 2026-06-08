@@ -38,18 +38,16 @@ enum class threeph_type { emission = -1, absorption = 1 };
 
 /// Four phonon process type
 enum class fourph_type {
-    plusplus   = 0,
-    plusminus  = 1,
-    minusminus = 2,
-    minusplus  = 3
+    recombination   = 0,
+    redistribution  = 1,
+    splitting       = 2
 };
 
 constexpr std::array<int,2> fourph_type_signs(fourph_type t) {
     switch (t) {
-        case fourph_type::plusplus:   return {+1,+1};
-        case fourph_type::plusminus:  return {+1,-1};
-        case fourph_type::minusminus: return {-1,-1};
-        case fourph_type::minusplus:  return {-1,+1};
+        case fourph_type::recombination:   return {+1,+1};
+        case fourph_type::redistribution:  return {+1,-1};
+        case fourph_type::splitting:  return {-1,+1};
     }
 
     return {0,0}; 
@@ -71,13 +69,16 @@ private:
                                const Crystal_structure& cell,
                                const Symmetry_operations& symmetries,
                                const Gamma_grid& grid,
-                               const std::vector<ph_process<3, threeph_type>>& processes,
+                               const std::vector<ph_process<3, threeph_type>>& processes_3ph,
+                               const std::vector<ph_process<4, fourph_type>>& processes_4ph,
                                const boost::mpi::communicator& comm);
+                               
     friend std::tuple<std::string,
                       std::unique_ptr<Crystal_structure>,
                       std::unique_ptr<Symmetry_operations>,
                       std::unique_ptr<Gamma_grid>,
-                      std::unique_ptr<std::vector<ph_process<3, threeph_type>>>>
+                      std::unique_ptr<std::vector<ph_process<3, threeph_type>>>,
+                      std::unique_ptr<std::vector<ph_process<4, fourph_type >>> >
                       load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm);
 
     /// Deviation from the conservation of energy.

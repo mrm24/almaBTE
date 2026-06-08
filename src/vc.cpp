@@ -238,4 +238,74 @@ std::unique_ptr<std::vector<Thirdorder_ifcs>> vc_mix_thirdorder_ifcs(
     }
     return nruter;
 }
+
+std::unique_ptr<std::vector<Fourthorder_ifcs>> vc_mix_fourthdorder_ifcs(
+    const std::vector<std::vector<Fourthorder_ifcs>>& components,
+    const std::vector<double>& ratios) {
+    auto ncomponents = components.size();
+
+    // Basic sanity checks.
+    if (ratios.size() != ncomponents)
+        throw value_error("different numbers of components and ratios");
+
+    if (ncomponents == 0)
+        throw value_error("no components in the virtual crystal");
+
+    for (auto r : ratios)
+        if (r <= 0)
+            throw value_error("all atomic ratios must be positive");
+    auto nifcs = components[0].size();
+
+    for (decltype(ncomponents) i = 1; i < ncomponents; ++i)
+        if (components[i].size() != nifcs)
+            throw value_error("all components must contain the same number"
+                              " of IFC blocks");
+    // Create the final object.
+    auto nruter = alma::make_unique<std::vector<Fourthorder_ifcs>>();
+    // We average the Cartesian coordinates of the unit cells and
+    // the IFCs. We require the atom indices to be common to all
+    // inputs.
+    double total = std::accumulate(ratios.begin(), ratios.end(), 0.);
+
+    for (decltype(nifcs) ic = 0; ic < nifcs; ++ic) {
+        auto i = components[0][ic].i;
+        auto j = components[0][ic].j;
+        auto k = components[0][ic].k;
+        auto l = components[0][ic].l;
+        Eigen::VectorXd rj{ratios[0] * components[0][ic].rj};
+        Eigen::VectorXd rk{ratios[0] * components[0][ic].rk};
+        Eigen::VectorXd rl{ratios[0] * components[0][ic].rl};
+
+        for (decltype(ncomponents) ir = 1; ir < ncomponents; ++ir) {
+            if ((components[ir][ic].i != i) || (components[ir][ic].j != j) ||
+                (components[ir][ic].k != k) || (components[ir][ic].l != l))
+                throw value_error("all components must contain IFC blocks"
+                                  " for the same atom triplets");
+            rj += ratios[ir] * components[ir][ic].rj;
+            rk += ratios[ir] * components[ir][ic].rk;
+            rl += ratios[ir] * components[ir][ic].rl;
+        }
+        rj /= total;
+        rk /= total;
+        rl /= total;
+        Fourthorder_ifcs block{rj, rk, rl, i, j, k, l};
+
+        for (std::size_t alpha = 0; alpha < 3; ++alpha)
+            for (std::size_t beta = 0; beta < 3; ++beta)
+                for (std::size_t gamma = 0; gamma < 3; ++gamma) 
+                    for (std::size_t zeta = 0; zeta < 3; ++zeta) {
+                        block.ifc(alpha, beta, gamma, zeta) =
+                            ratios[0] * components[0][ic].ifc(alpha, beta, gamma, zeta);
+
+                        for (decltype(ncomponents) ir = 1; ir < ncomponents; ++ir)
+                            block.ifc(alpha, beta, gamma, zeta) +=
+                                ratios[ir] *
+                                components[ir][ic].ifc(alpha, beta, gamma, zeta);
+                        block.ifc(alpha, beta, gamma, zeta) /= total;
+                }
+        nruter->emplace_back(block);
+    }
+    return nruter;
+}
+
 } // namespace alma

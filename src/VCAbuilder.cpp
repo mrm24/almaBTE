@@ -75,6 +75,8 @@ std::vector<std::string> mixparameterName;
 bool overwrite = false;
 // NAC method. The default is the Wang method.
 alma::nonanalytic_treatment nonanalytic_method = alma::nonanalytic_treatment::wang;
+// Four phonons 
+bool four_phonons = false;
 ////////////////////////////////////////////
 
 // Helper function to list combinations of parametric mix fractions
@@ -308,6 +310,15 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
     auto thirdorder_path = dir / boost::filesystem::path("FORCE_CONSTANTS_3RD");
     auto thirdorder = alma::load_FORCE_CONSTANTS_3RD(
         thirdorder_path.string().c_str(), *poscar);
+    
+    std::unique_ptr<std::vector<alma::Fourthorder_ifcs>> fourthorder;
+    if (four_phonons) {
+        std::cout << "Loading force constants 4th order" << std::endl;
+        auto fourdorder_path = dir / boost::filesystem::path("FORCE_CONSTANTS_4TH");
+        fourthorder = std::move(alma::load_FORCE_CONSTANTS_4TH(
+            fourdorder_path.string().c_str(), *poscar));
+    }
+
 
     std::cout << "Calculating symmetries" << std::endl;
     auto syms = alma::Symmetry_operations(*poscar);
@@ -383,6 +394,34 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
         threeph_processes[i].compute_vp2(*poscar, *grid, *thirdorder);
     }
 
+    // find four phonon processes
+    std::vector<alma::Fourph_process> fourph_processes;
+    if (four_phonons) {
+        std::cout << "Finding 4-phonon processes" << std::endl;
+        std::cout << "Using scalebroad = " << scalebroad << std::endl;
+        fourph_processes = alma::find_allowed_fourph(*grid, world,scalebroad);
+
+        std::cout << "Computing matrix elements" << std::endl;
+
+        std::size_t targetpercentage = 1;
+
+        // Precompute the matrix elements.
+        for (std::size_t i = 0; i < fourph_processes.size(); ++i) {
+            while (100 * (i + 1) / fourph_processes.size() >= targetpercentage) {
+                std::cout << "  " << targetpercentage << "% \t";
+                std::cout.flush();
+
+                if (targetpercentage % 10 == 0) {
+                    std::cout << std::endl;
+                }
+                targetpercentage++;
+            }
+
+            fourph_processes[i].compute_vp2(*poscar, *grid, *fourthorder);
+        }
+
+    }
+
     // WRITE OUTPUT
 
     std::cout << "Writing to file " << filename << std::endl;
@@ -393,6 +432,7 @@ void singleCrystalBuilder(boost::mpi::communicator world) {
                          syms,
                          *grid,
                          threeph_processes,
+                         fourph_processes,
                          world);
 
     std::cout << std::endl << "[DONE.]" << std::endl;
@@ -696,6 +736,8 @@ int alloyBuilder() {
     std::vector<std::unique_ptr<alma::Harmonic_ifcs>> IFC2_pointers;
     std::vector<std::unique_ptr<std::vector<alma::Thirdorder_ifcs>>>
         IFC3_pointers;
+    std::vector<std::unique_ptr<std::vector<alma::Fourthorder_ifcs>>>
+        IFC4_pointers;
 
     boost::filesystem::current_path(basedir);
 
@@ -706,6 +748,7 @@ int alloyBuilder() {
         std::unique_ptr<alma::Crystal_structure> poscar;
         std::unique_ptr<alma::Harmonic_ifcs> IFC2;
         std::unique_ptr<std::vector<alma::Thirdorder_ifcs>> IFC3;
+        std::unique_ptr<std::vector<alma::Fourthorder_ifcs>> IFC4;
 
         auto compound_dir = boost::filesystem::path(materialBase.at(nmat));
 
@@ -752,12 +795,33 @@ int alloyBuilder() {
         IFC3 =
             alma::load_FORCE_CONSTANTS_3RD(ifc3_path.string().c_str(), *poscar);
 
+        // load 4th-order force constants
+        // if required
+
+        if (four_phonons) {
+            auto ifc4_path =
+                compound_dir / boost::filesystem::path("FORCE_CONSTANTS_4TH");
+
+            if (!boost::filesystem::exists(ifc4_path)) {
+                std::cout << "ERROR:" << std::endl;
+                std::cout << "FORCE_CONSTANTS_4TH file for "
+                        << materialBase.at(nmat) << " is missing." << std::endl;
+                world.abort(1);
+            }
+
+            IFC4 =
+                alma::load_FORCE_CONSTANTS_4TH(ifc4_path.string().c_str(), *poscar);
+        } else {
+            IFC4 = std::make_unique<std::vector<alma::Fourthorder_ifcs>>();
+        }
+
         // STORE INFORMATION
         // (Only do this now since poscar pointer will point to NULL after move)
 
         poscar_pointers.emplace_back(std::move(poscar));
         IFC2_pointers.emplace_back(std::move(IFC2));
         IFC3_pointers.emplace_back(std::move(IFC3));
+        IFC4_pointers.emplace_back(std::move(IFC4));
     }
 
     // CONSTRUCT VIRTUAL CRYSTAL
@@ -767,12 +831,14 @@ int alloyBuilder() {
     std::vector<alma::Crystal_structure> poscar_list;
     std::vector<alma::Harmonic_ifcs> IFC2_list;
     std::vector<std::vector<alma::Thirdorder_ifcs>> IFC3_list;
+    std::vector<std::vector<alma::Fourthorder_ifcs>> IFC4_list;
     std::vector<alma::Dielectric_parameters> born_list;
 
     for (int nmat = 0; nmat < Nmat; nmat++) {
         poscar_list.emplace_back(*poscar_pointers.at(nmat));
         IFC2_list.emplace_back(*IFC2_pointers.at(nmat));
         IFC3_list.emplace_back(*IFC3_pointers.at(nmat));
+        IFC4_list.emplace_back(*IFC4_pointers.at(nmat));
 
         if (polar) {
             born_list.emplace_back(*born_pointers.at(nmat));
@@ -782,6 +848,7 @@ int alloyBuilder() {
     auto vc_poscar = alma::vc_mix_structures(poscar_list, ratios);
     auto vc_ifcs = alma::vc_mix_harmonic_ifcs(IFC2_list, ratios);
     auto vc_thirdorder = alma::vc_mix_thirdorder_ifcs(IFC3_list, ratios);
+    auto vc_fourthorder = alma::vc_mix_fourthdorder_ifcs(IFC4_list, ratios);
 
     std::unique_ptr<alma::Dielectric_parameters> vc_born;
 
@@ -845,6 +912,34 @@ int alloyBuilder() {
         threeph_processes[i].compute_vp2(*vc_poscar, *grid, *vc_thirdorder);
     }
 
+    // find four phonon processes
+    std::vector<alma::Fourph_process> fourph_processes;
+    if (four_phonons) {
+        std::cout << "Finding 4-phonon processes" << std::endl;
+        std::cout << "Using scalebroad = " << scalebroad << std::endl;
+        fourph_processes = alma::find_allowed_fourph(*grid, world,scalebroad);
+
+        std::cout << "Computing matrix elements" << std::endl;
+
+        std::size_t targetpercentage = 1;
+
+        // Precompute the matrix elements.
+        for (std::size_t i = 0; i < fourph_processes.size(); ++i) {
+            while (100 * (i + 1) / fourph_processes.size() >= targetpercentage) {
+                std::cout << "  " << targetpercentage << "% \t";
+                std::cout.flush();
+
+                if (targetpercentage % 10 == 0) {
+                    std::cout << std::endl;
+                }
+                targetpercentage++;
+            }
+
+            fourph_processes[i].compute_vp2(*vc_poscar, *grid, *vc_fourthorder);
+        }
+
+    }
+
     // WRITE OUTPUT
 
     boost::filesystem::current_path(launch_path);
@@ -858,6 +953,7 @@ int alloyBuilder() {
                          syms,
                          *grid,
                          threeph_processes,
+                         fourph_processes,
                          world);
 
     return 0;
@@ -980,7 +1076,11 @@ int main(int argc, char** argv) {
                 else {
                     throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
                 }  
-            } 
+            }
+
+            if (v.first == "FourPhonons") 
+                four_phonons = true;
+
         }
     } // end singlecrystal
 
@@ -1021,7 +1121,7 @@ int main(int argc, char** argv) {
 
             if (v.first == "nonanalytic_treatment") {
                 std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
-		alma::string_to_lower(my_nac);
+		        alma::string_to_lower(my_nac);
                 if (my_nac.find("gonze") != std::string::npos) {
                     nonanalytic_method = alma::nonanalytic_treatment::gonze;
                 }
@@ -1031,7 +1131,10 @@ int main(int argc, char** argv) {
                 else {
                     throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
                 }  
-            } 
+            }
+
+            if (v.first == "FourPhonons") 
+                four_phonons = true;
             
         }
     } // end alloy
@@ -1102,7 +1205,7 @@ int main(int argc, char** argv) {
             if (v.first == "nonanalytic_treatment") {
                 std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
                 alma::string_to_lower(my_nac);
-		if (my_nac.find("gonze") != std::string::npos) {
+		        if (my_nac.find("gonze") != std::string::npos) {
                     nonanalytic_method = alma::nonanalytic_treatment::gonze;
                 }
                 else if (my_nac.find("wang") != std::string::npos) {
@@ -1111,7 +1214,10 @@ int main(int argc, char** argv) {
                 else {
                     throw alma::value_error("Unrecognized NAC treatment: only Gonze and Wang are supported.");
                 }  
-            } 
+            }
+            
+            if (v.first == "FourPhonons") 
+                four_phonons = true;
 
         }
     } // end parametricalloy

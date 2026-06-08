@@ -80,14 +80,16 @@ private:
                                const Crystal_structure& cell,
                                const Symmetry_operations& symmetries,
                                const Gamma_grid& grid,
-                               const std::vector<Threeph_process>& processes,
+                               const std::vector<Threeph_process>& processes_3ph,
+			       const std::vector<Fourph_process>& processes_4ph,
                                const boost::mpi::communicator& comm);
 
     friend std::tuple<std::string,
                       std::unique_ptr<Crystal_structure>,
                       std::unique_ptr<Symmetry_operations>,
                       std::unique_ptr<Gamma_grid>,
-                      std::unique_ptr<std::vector<Threeph_process>>>
+                      std::unique_ptr<std::vector<Threeph_process>>,
+		      std::unique_ptr<std::vector<Fourph_process>>>
     load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm);
 
     /// Deviation from the conservation of energy.

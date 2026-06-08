@@ -94,6 +94,15 @@ int main(int argc, char** argv) {
     auto syms = std::move(std::get<2>(hdf5_data));
     auto grid = std::move(std::get<3>(hdf5_data));
     auto processes = std::move(std::get<4>(hdf5_data));
+    auto processes_4ph = std::move(std::get<5>(hdf5_data));
+
+    // Get if 4 ph information can be found in the HDF5 file
+    bool hdf5_with4ph = (*processes_4ph).size() != 0;
+    all_reduce(world, boost::mpi::inplace_t<bool>(hdf5_with4ph), 
+               std::logical_or<bool>());
+    
+    if (hdf5_with4ph && rank == master) 
+        std::cout << "The HDF5 contains 4 ph information" << std::endl;
 
     // RTA scattering rates at the specified temperature.
     if (rank == master) std::cout << "Calculating scattering rates" << std::endl;
@@ -104,6 +113,13 @@ int main(int argc, char** argv) {
         alma::calc_w0_twoph(*poscar, *grid, twoph_processes, world));
     Eigen::ArrayXXd w0(w3 + w2);
 
+    Eigen::ArrayXXd w4;
+    if (hdf5_with4ph) {
+	if (rank == master) std::cout << "Calculating 4-ph scattering rates" << std::endl;
+        w4 = alma::calc_w0_fourph(*grid, *processes_4ph, Tambient, world);
+        w0 += w4;
+    }
+
     // Phase space and weighted phase space at the specified temperature
     if (rank == master) std::cout << "Calculating phase space and weighted phase space" << std::endl;
     Eigen::MatrixXd P3plus, P3minus, WP3plus, WP3minus;
@@ -113,6 +129,9 @@ int main(int argc, char** argv) {
 
     if (rank == master) std::cout << "Calculation the small grain thermal conductivity" << std::endl;
     auto kappa_sg = calc_kappa_sg(*poscar, *grid, *syms, Tambient);
+
+    if (rank == master) std::cout << "Calculation the coherence contribution to the thermal conductivity" << std::endl;
+    auto kappa_wigner = alma::calc_kappa_coherence(*poscar, *grid, *syms, w0, Tambient);
 
     /// Master process prints the results
     if (world.rank() == 0) {
@@ -177,6 +196,8 @@ int main(int argc, char** argv) {
         std::cout << "-Total phase space : " << phase_space.second << " [ps^{4}/rad^{4}]" << std::endl;
         std::cout << "-Small-grain thermal conductivity tensor [W / (m K nm)]:" << std::endl;
         std::cout << kappa_sg << std::endl;
+        std::cout << "-Coherence contribution [W / (m K)]:" << std::endl;
+        std::cout << kappa_wigner << std::endl;
         std::cout << std::endl << "[DONE.]" << std::endl;
     }
 

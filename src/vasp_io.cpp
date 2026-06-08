@@ -174,11 +174,6 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
             std::string tmp;
             std::getline(f, tmp);
 
-            std::cout << i << '\t' << j << std::endl;
-            std::cout << index1.ia << '\t' << index1.ib << '\t' << index1.ic << std::endl;
-            std::cout << index2.ia << '\t' << index2.ib << '\t' << index2.ic << std::endl;
-            std::cout << "IDXS: " << index1.iatom << '\t' << index2.iatom << std::endl;
-
             if ((index1.ia == 0) && (index1.ib == 0) && (index1.ic == 0)) {
                 // The first unit cell is (0, 0, 0). Read and store
                 // the data.

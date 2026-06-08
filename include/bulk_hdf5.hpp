@@ -37,7 +37,8 @@ namespace alma {
 /// @param[in] cell - description of the unit cell
 /// @param[in] symmetries - symmetry operations of the unit cell
 /// @param[in] grid - phonon spectrum on a refular grid
-/// @param[in] processes - allowed three-phonon processes
+/// @param[in] processes_3ph - allowed three-phonon processes
+/// @param[in] processes_4ph - allowed three-phonon processes
 /// @param[in] comm - MPI communicator used to coordinate with all
 /// other processes
 void save_bulk_hdf5(const char* filename,
@@ -45,7 +46,8 @@ void save_bulk_hdf5(const char* filename,
                     const Crystal_structure& cell,
                     const Symmetry_operations& symmetries,
                     const Gamma_grid& grid,
-                    const std::vector<Threeph_process>& processes,
+                    const std::vector<Threeph_process>& processes_3ph,
+                    const std::vector<Fourph_process>& processes_4ph,
                     const boost::mpi::communicator& comm);
 
 /// Reconstruct all data structures from a file saved with
@@ -60,12 +62,14 @@ void save_bulk_hdf5(const char* filename,
 /// cell - description of the unit cell
 /// symmetries - symmetry operations of the unit cell
 /// grid - phonon spectrum on a refular grid
-/// processes - allowed three-phonon processes
+/// processes_3ph - allowed three-phonon processes
+/// processes_4ph - allowed four-phonon processes
 std::tuple<std::string,
            std::unique_ptr<Crystal_structure>,
            std::unique_ptr<Symmetry_operations>,
            std::unique_ptr<Gamma_grid>,
-           std::unique_ptr<std::vector<Threeph_process>>>
+           std::unique_ptr<std::vector<Threeph_process>>,
+           std::unique_ptr<std::vector<Fourph_process>>>
 load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm);
 
 /// Return the names of all subgroups in the "/scattering" group of

@@ -67,4 +67,15 @@ std::unique_ptr<Harmonic_ifcs> vc_mix_harmonic_ifcs(
 std::unique_ptr<std::vector<Thirdorder_ifcs>> vc_mix_thirdorder_ifcs(
     const std::vector<std::vector<Thirdorder_ifcs>>& components,
     const std::vector<double>& ratios);
+
+/// Create a set of average fourth-order force constants from
+/// compatible inputs.
+///
+/// @param[in] components - input third-order force constants
+/// @param[in] ratios - set of positive weights for the components
+/// @return the weighted average of the input fourth-order force
+/// constants.
+std::unique_ptr<std::vector<Fourthorder_ifcs>> vc_mix_fourthdorder_ifcs(
+    const std::vector<std::vector<Fourthorder_ifcs>>& components,
+    const std::vector<double>& ratios);
 } // namespace alma

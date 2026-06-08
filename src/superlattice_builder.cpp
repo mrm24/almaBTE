@@ -98,6 +98,8 @@ bool do3ph = true;
 bool overwrite = false;
 // NAC method. The default is the Wang method.
 alma::nonanalytic_treatment nonanalytic_method = alma::nonanalytic_treatment::wang;
+// deal with four phonon processed?
+bool do4ph = false;
 ////////////////////////////////////////////
 
 
@@ -267,6 +269,9 @@ int main(int argc, char** argv) {
         else if (v.first == "skip3ph") {
             do3ph = false;
         }
+        else if (v.first == "do4ph") {
+            do4ph = true;
+        }
         else if (v.first == "normal") {
             normal << alma::parseXMLfield<int>(v, "na"),
                 alma::parseXMLfield<int>(v, "nb"),
@@ -425,6 +430,7 @@ int main(int argc, char** argv) {
     std::vector<std::unique_ptr<alma::Harmonic_ifcs>> IFC2_ptrs;
     std::vector<std::unique_ptr<alma::Dielectric_parameters>> born_ptrs;
     std::vector<std::unique_ptr<std::vector<alma::Thirdorder_ifcs>>> IFC3_ptrs;
+    std::vector<std::unique_ptr<std::vector<alma::Fourthorder_ifcs>>> IFC4_ptrs;
 
     for (const auto& m : materialBase) {
         std::cout << "Loading crystal information for " << m << std::endl;
@@ -460,6 +466,19 @@ int main(int argc, char** argv) {
             }
             IFC3_ptrs.emplace_back(alma::load_FORCE_CONSTANTS_3RD(
                 ifc3_path.string().c_str(), *(poscar_ptrs.back())));
+        }
+
+        if (do4ph) {
+            auto ifc4_path =
+                compound_dir / boost::filesystem::path("FORCE_CONSTANTS_4TH");
+
+            if (!boost::filesystem::exists(ifc4_path)) {
+                std::cout << "ERROR: FORCE_CONSTANTS_4TH file for " << m
+                          << " is missing" << std::endl;
+                world.abort(1);
+            }
+            IFC4_ptrs.emplace_back(alma::load_FORCE_CONSTANTS_4TH(
+                ifc4_path.string().c_str(), *(poscar_ptrs.back())));
         }
 
         if (polar) {
@@ -617,6 +636,31 @@ int main(int argc, char** argv) {
         processes = alma::make_unique<std::vector<alma::Threeph_process>>();
     }
 
+    // If requested, run the fourth-order calculation for the virtual crystal.
+    std::unique_ptr<std::vector<alma::Fourph_process>> processes_4ph;
+
+    if (do4ph) {
+        std::cout << "Performing four-phonon calculations" << std::endl;
+        std::cout << "Using scalebroad = " << scalebroad << std::endl;
+        auto vc_fourthorder = alma::vc_mix_fourthdorder_ifcs(
+            {*(IFC4_ptrs.front()), *(IFC4_ptrs.back())}, {x1st, x2nd});
+        processes_4ph = alma::make_unique<std::vector<alma::Fourph_process>>(
+            alma::find_allowed_fourph(*grid, world, scalebroad));
+
+        for (auto& p : *processes_4ph) {
+            p.compute_gaussian();
+            p.compute_vp2(*vc_poscar, *grid, *vc_fourthorder);
+        }
+    }
+    else {
+        std::cout
+            << "Skipping the four-phonon calculations at the user's request"
+            << std::endl;
+        // Note that we still create a valid (but empty) vector of three-phonon
+        // processes.
+        processes_4ph = alma::make_unique<std::vector<alma::Fourph_process>>();
+    }
+
     // Get the two sets of elastic scattering rates specific to superlattices.
     // 1 - Mass disorder in the effective medium.
     std::cout << "Computing scattering rates due to mass disorder" << std::endl;
@@ -636,6 +680,7 @@ int main(int argc, char** argv) {
                          syms,
                          *grid,
                          *processes,
+                         *processes_4ph,
                          world);
     // Second part: elastic scattering rates.
     alma::Scattering_subgroup disorder_group(

@@ -21,6 +21,7 @@
 #include <periodic_table.hpp>
 #include <utilities.hpp>
 #include <processes.hpp>
+#include <numbers>
 
 namespace alma {
     
@@ -338,10 +339,9 @@ std::vector<Fourph_process> find_allowed_fourph(
     const boost::mpi::communicator& communicator,
     double scalebroad) {
     constexpr std::array<fourph_type, 4> kinds {{
-        fourph_type::minusminus,
-        fourph_type::minusplus,
-        fourph_type::plusminus,
-        fourph_type::plusplus    
+        fourph_type::recombination,
+        fourph_type::redistribution,
+        fourph_type::splitting    
     }};
     auto nprocs = communicator.size();
     auto my_id  = communicator.rank();
@@ -376,9 +376,6 @@ std::vector<Fourph_process> find_allowed_fourph(
                 // conservation rules. We iterate over the processes
                 for (const auto kind : kinds) {
 
-                    /// Minus plus will be reconstructed from plus minus
-                    if (kind == fourph_type::minusplus) continue;
-
                     auto s = fourph_type_signs(kind);
                     for (auto i = 0; i < 3; ++i) 
                         coords4[i] = coords1[i] + s[0] * coords2[i] + s[1] * coords3[i];
@@ -403,7 +400,9 @@ std::vector<Fourph_process> find_allowed_fourph(
                                                  s[1] * spectrum3.omega(im3) -
                                                         spectrum4.omega(im4));
                                     
-                                    if (delta <= constants::nsigma * sigma)
+                                    if (delta <= constants::nsigma * sigma) {
+                                        /// For cases in which sigma is 0 and energy is conserved
+                                        if (alma::almost_equal(sigma, 0.)) sigma = std::numbers::inv_sqrtpi_v<double>; 
                                         nruter.emplace_back(Fourph_process(
                                             ic,
                                             std::array<std::size_t, 4>(
@@ -413,6 +412,7 @@ std::vector<Fourph_process> find_allowed_fourph(
                                             kind,
                                             delta,
                                             sigma));
+                                    }
                                 }
                             }
                         }
@@ -441,7 +441,7 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_weighted_gaussi
 
     int m2 = (1 - s[0]) / 2;
     int m3 = (1 - s[1]) / 2;
-    double factor = (this->type == fourph_type::minusminus) ? 6.0 : 2.0; 
+    double factor = (this->type == fourph_type::splitting) ? 6.0 : 2.0; 
 
     return ( (fBE2 + m2) * (fBE3 + m3) * fBE4 ) * g / sp1.omega[this->alpha[0]] /
            sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]] /
@@ -453,8 +453,8 @@ template<> template<> double alma::ph_process<4, alma::fourph_type>::compute_vp2
     const Crystal_structure& cell,
     const Gamma_grid& grid,
     const std::vector<Fourthorder_ifcs>& fourthorder) {
-    // Prefactor used to convert the result to SI
-    constexpr double unitfactor = 1e-9 * constants::e * constants::e /
+    // Prefactor used to convert the result to go from eV^2/(amu^4 Ang^8) to THz^4 / (kg^4 nm^4)
+    constexpr double unitfactor = 1e-8 * constants::e * constants::e /
                                   constants::amu / constants::amu /
                                   constants::amu / constants::amu;
     const auto s = fourph_type_signs(this->type);
@@ -511,7 +511,7 @@ template<> template<> double alma::ph_process<4, alma::fourph_type>::compute_vp2
 
 template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gamma_grid& grid, double T) {
 
-    const double prefactor = 1e9 * constants::hbar * constants::hbar * constants::pi / 8.0;
+    const double prefactor = 1.0e+12 * constants::hbar * constants::hbar * constants::pi / 8.0;
 
     auto g = this->compute_gaussian();
     auto s = fourph_type_signs(this->type);
@@ -534,7 +534,7 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
 template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma_reduced(const Gamma_grid& grid,
                                             double T) {
 
-    const double prefactor = 1e9 * constants::hbar * constants::hbar * constants::pi / 8.0;
+    const double prefactor = 1.0e+12 * constants::hbar * constants::hbar * constants::pi / 8.0;
 
     auto g = this->compute_gaussian();
     auto vp2 = this->get_vp2();
@@ -564,7 +564,7 @@ Eigen::ArrayXXd calc_w0_fourph(const alma::Gamma_grid& grid,
     my_w0.fill(0.);
 
     for (std::size_t i = 0; i < processes.size(); ++i) {
-        auto factor = (processes[i].type == fourph_type::minusminus) ? 1.0 / 6.0 : 0.5;
+        auto factor = (processes[i].type == fourph_type::splitting) ? 1.0 / 6.0 : 0.5;
         auto gamma  = processes[i].compute_gamma(grid, T);
         my_w0(processes[i].alpha[0], processes[i].q[0]) += factor * gamma;
     }
