@@ -514,7 +514,6 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
     const double prefactor = 1.0e+12 * constants::hbar * constants::hbar * constants::pi / 8.0;
 
     auto g = this->compute_gaussian();
-    auto s = fourph_type_signs(this->type);
     auto vp2 = this->get_vp2();
     auto sp1 = grid.get_spectrum_at_q(this->q[0]);
     auto sp2 = grid.get_spectrum_at_q(this->q[1]);
@@ -526,10 +525,10 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
 
     double population_factor;
 
-    if (s == alma::recombination) {
+    if (this->type == fourph_type::recombination) {
         population_factor = fBE2 * fBE3 - (fBE2 + fBE3 + 1.0) * fBE4;
     }
-    else if (s == alma::splitting) {
+    else if (this->type  == fourph_type::splitting) {
 	population_factor = fBE2 * fBE3 + fBE2 * fBE4 + fBE2 + fBE3 * fBE4 + fBE3 + fBE4 + 1.0;
     }
     else {	

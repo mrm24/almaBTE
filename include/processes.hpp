@@ -47,7 +47,7 @@ constexpr std::array<int,2> fourph_type_signs(fourph_type t) {
     switch (t) {
         case fourph_type::recombination:   return {+1,+1};
         case fourph_type::redistribution:  return {+1,-1};
-        case fourph_type::splitting:  return {-1,+1};
+        case fourph_type::splitting:  return {-1,-1};
     }
 
     return {0,0}; 
