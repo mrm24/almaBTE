@@ -338,7 +338,7 @@ std::vector<Fourph_process> find_allowed_fourph(
     const Gamma_grid& grid,
     const boost::mpi::communicator& communicator,
     double scalebroad) {
-    constexpr std::array<fourph_type, 4> kinds {{
+    constexpr std::array<fourph_type, 3> kinds {{
         fourph_type::recombination,
         fourph_type::redistribution,
         fourph_type::splitting    
@@ -529,13 +529,13 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
         population_factor = fBE2 * fBE3 - (fBE2 + fBE3 + 1.0) * fBE4;
     }
     else if (this->type  == fourph_type::splitting) {
-	population_factor = fBE2 * fBE3 + fBE2 * fBE4 + fBE2 + fBE3 * fBE4 + fBE3 + fBE4 + 1.0;
+	    population_factor = fBE2 * fBE3 + fBE2 * fBE4 + fBE2 + fBE3 * fBE4 + fBE3 + fBE4 + 1.0;
     }
     else {	
-	population_factor = fBE2 * ( fBE3 + fBE4 + 1.0) - fBE3 * fBE4;
+	    population_factor = fBE2 * ( fBE3 + fBE4 + 1.0) - fBE3 * fBE4;
     }
 
-    return prefactor * population_factor * g * vp2 / sp1.omega[this->alpha[0]] /
+    return prefactor * population_factor * g * vp2 / grid.nqpoints / sp1.omega[this->alpha[0]] /
            sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]];
 }
 

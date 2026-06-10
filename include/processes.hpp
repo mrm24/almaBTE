@@ -50,6 +50,8 @@ constexpr std::array<int,2> fourph_type_signs(fourph_type t) {
         case fourph_type::splitting:  return {-1,-1};
     }
 
+    throw std::runtime_error("Error(fourph_type_signs): should not be here");
+
     return {0,0}; 
 }
 
