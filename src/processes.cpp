@@ -486,11 +486,11 @@ template<> template<> double alma::ph_process<4, alma::fourph_type>::compute_vp2
             cell.get_mass(four.i) * cell.get_mass(four.j) * cell.get_mass(four.k) * cell.get_mass(four.l));
         double arg2 = s[0] * q2.dot(four.rj);
         double arg3 = s[1] * q3.dot(four.rk);
-        double arg4 = -q4.dot(four.rl);
+        double arg4 = q4.dot(four.rl);
         std::complex<double> prefactor =
             (std::cos(arg2) + constants::imud * std::sin(arg2)) *
             (std::cos(arg3) + constants::imud * std::sin(arg3)) *
-            (std::cos(arg4) + constants::imud * std::sin(arg4)) / massfactor;
+            (std::cos(arg4) - constants::imud * std::sin(arg4)) / massfactor;
         std::complex<double> contr = 0.;
 
         for (auto rr = 0; rr < 3; ++rr)
@@ -524,10 +524,19 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
     auto fBE3 = bose_einstein(sp3.omega[this->alpha[2]], T);
     auto fBE4 = bose_einstein(sp4.omega[this->alpha[3]], T);
 
-    int m2 = (1 - s[0]) / 2;
-    int m3 = (1 - s[1]) / 2;
+    double population_factor;
 
-    return prefactor * ( (fBE2 + m2) * (fBE3 + m3) * fBE4 ) * g * vp2 / sp1.omega[this->alpha[0]] /
+    if (s == alma::recombination) {
+        population_factor = fBE2 * fBE3 - (fBE2 + fBE3 + 1.0) * fBE4;
+    }
+    else if (s == alma::splitting) {
+	population_factor = fBE2 * fBE3 + fBE2 * fBE4 + fBE2 + fBE3 * fBE4 + fBE3 + fBE4 + 1.0;
+    }
+    else {	
+	population_factor = fBE2 * ( fBE3 + fBE4 + 1.0) - fBE3 * fBE4;
+    }
+
+    return prefactor * population_factor * g * vp2 / sp1.omega[this->alpha[0]] /
            sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]];
 }
 
