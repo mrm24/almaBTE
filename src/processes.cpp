@@ -345,7 +345,8 @@ std::vector<Fourph_process> find_allowed_fourph(
     }};
     auto nprocs = communicator.size();
     auto my_id  = communicator.rank();
-    auto limits = my_jobs(grid.get_nequivalences(), nprocs, my_id);
+    std::size_t njobs  = grid.get_nequivalences() * grid.nqpoints;
+    auto limits = my_jobs(njobs, nprocs, my_id);
 
     std::size_t nmodes = grid.get_spectrum_at_q(0).omega.size();
 
@@ -358,70 +359,69 @@ std::vector<Fourph_process> find_allowed_fourph(
     
     std::vector<Fourph_process> nruter;
 
-    for (auto ic = limits[0]; ic < limits[1]; ++ic) {
+    for (auto ijob = limits[0]; ijob < limits[1]; ++ijob) {
+        auto ic  = ijob / grid.nqpoints;
         auto iq1 = grid.get_representative(ic);
         auto coords1 = grid.one_to_three(iq1);
         auto spectrum1 = grid.get_spectrum_at_q(iq1);
 
-        for (std::size_t iq2 = 0; iq2 < grid.nqpoints; ++iq2) {
-            auto coords2 = grid.one_to_three(iq2);
-            auto spectrum2 = grid.get_spectrum_at_q(iq2);
-            decltype(coords2) coords3;
+        auto iq2 = ijob % grid.nqpoints;
+        auto coords2 = grid.one_to_three(iq2);
+        auto spectrum2 = grid.get_spectrum_at_q(iq2);
+        decltype(coords2) coords3;
 
-            for (std::size_t iq3 = 0; iq3 < grid.nqpoints; ++iq3) {
-                auto coords3 = grid.one_to_three(iq3);
-                auto spectrum3 = grid.get_spectrum_at_q(iq3);
-                decltype(coords3) coords4;
-                // The different 4-ph satisfy different
-                // conservation rules. We iterate over the processes
-                for (const auto kind : kinds) {
+        for (std::size_t iq3 = 0; iq3 < grid.nqpoints; ++iq3) {
+            auto coords3 = grid.one_to_three(iq3);
+            auto spectrum3 = grid.get_spectrum_at_q(iq3);
+            decltype(coords3) coords4;
+            // The different 4-ph satisfy different
+            // conservation rules. We iterate over the processes
+            for (const auto kind : kinds) {
 
-                    auto s = fourph_type_signs(kind);
-                    for (auto i = 0; i < 3; ++i) 
-                        coords4[i] = coords1[i] + s[0] * coords2[i] + s[1] * coords3[i];
-                    auto iq4 = grid.three_to_one(coords4);
-                    auto spectrum4 = grid.get_spectrum_at_q(iq4);
+                auto s = fourph_type_signs(kind);
+                for (auto i = 0; i < 3; ++i)
+                    coords4[i] = coords1[i] + s[0] * coords2[i] + s[1] * coords3[i];
+                auto iq4 = grid.three_to_one(coords4);
+                auto spectrum4 = grid.get_spectrum_at_q(iq4);
 
-                    /// Iterate over the bands
-                    for (decltype(nmodes) im1 = 0; im1 < nmodes; ++im1) {
-                        if (spectrum1.omega(im1) == 0.) continue;
-                        for (decltype(nmodes) im2 = 0; im2 < nmodes; ++im2) {
-                            if (spectrum2.omega(im2) == 0.) continue;
-                            for (decltype(nmodes) im3 = 0; im3 < nmodes; ++im3) {
-                                if (spectrum3.omega(im3) == 0.) continue;
-                                for (decltype(nmodes) im4 = 0; im4 < nmodes; ++im4) {
-                                    if (spectrum4.omega(im4) == 0.) continue;
+                /// Iterate over the bands
+                for (decltype(nmodes) im1 = 0; im1 < nmodes; ++im1) {
+                    if (spectrum1.omega(im1) == 0.) continue;
+                    for (decltype(nmodes) im2 = 0; im2 < nmodes; ++im2) {
+                        if (spectrum2.omega(im2) == 0.) continue;
+                        for (decltype(nmodes) im3 = 0; im3 < nmodes; ++im3) {
+                            if (spectrum3.omega(im3) == 0.) continue;
+                            for (decltype(nmodes) im4 = 0; im4 < nmodes; ++im4) {
+                                if (spectrum4.omega(im4) == 0.) continue;
 
-                                    auto v =
-                                        spectrum3.vg.col(im3) - spectrum4.vg.col(im4);
-                                    auto sigma = scalebroad * grid.base_sigma(v);
-                                    double delta = std::fabs(spectrum1.omega(im1) + 
-                                                 s[0] * spectrum2.omega(im2) +
-                                                 s[1] * spectrum3.omega(im3) -
-                                                        spectrum4.omega(im4));
-                                    
-                                    if (delta <= constants::nsigma * sigma) {
-                                        /// For cases in which sigma is 0 and energy is conserved
-                                        if (alma::almost_equal(sigma, 0.)) sigma = std::numbers::inv_sqrtpi_v<double>; 
-                                        nruter.emplace_back(Fourph_process(
-                                            ic,
-                                            std::array<std::size_t, 4>(
-                                                {{iq1, iq2, iq3, iq4}}),
-                                            std::array<std::size_t, 4>(
-                                                {{im1, im2, im3, im4}}),
-                                            kind,
-                                            delta,
-                                            sigma));
-                                    }
+                                auto v =
+                                    spectrum3.vg.col(im3) - spectrum4.vg.col(im4);
+                                auto sigma = scalebroad * grid.base_sigma(v);
+                                double delta = std::fabs(spectrum1.omega(im1) +
+                                             s[0] * spectrum2.omega(im2) +
+                                             s[1] * spectrum3.omega(im3) -
+                                                    spectrum4.omega(im4));
+
+                                if (delta <= constants::nsigma * sigma) {
+                                    /// For cases in which sigma is 0 and energy is conserved
+                                    if (alma::almost_equal(sigma, 0.)) sigma = std::numbers::inv_sqrtpi_v<double>;
+                                    nruter.emplace_back(Fourph_process(
+                                        ic,
+                                        std::array<std::size_t, 4>(
+                                            {{iq1, iq2, iq3, iq4}}),
+                                        std::array<std::size_t, 4>(
+                                            {{im1, im2, im3, im4}}),
+                                        kind,
+                                        delta,
+                                        sigma));
                                 }
                             }
                         }
                     }
                 }
-
             }
-        }
-    }
+        } 
+    }    
 
     return nruter;
 }
@@ -453,8 +453,8 @@ template<> template<> double alma::ph_process<4, alma::fourph_type>::compute_vp2
     const Crystal_structure& cell,
     const Gamma_grid& grid,
     const std::vector<Fourthorder_ifcs>& fourthorder) {
-    // Prefactor used to convert the result to go from eV^2/(amu^4 Ang^8) to THz^4 / (kg^4 nm^4)
-    constexpr double unitfactor = 1e-8 * constants::e * constants::e /
+    // Prefactor used to convert the result to go from eV^2/(amu^4 Ang^8) to THz^4 / (kg^2 nm^4)
+    constexpr double unitfactor = 1e-4 * constants::e * constants::e /
                                   constants::amu / constants::amu /
                                   constants::amu / constants::amu;
     const auto s = fourph_type_signs(this->type);
@@ -498,7 +498,7 @@ template<> template<> double alma::ph_process<4, alma::fourph_type>::compute_vp2
                 for (auto tt = 0; tt < 3; ++tt)
                     for (auto ll = 0; ll < 3; ++ll) 
                         contr += wf1(tt + 3 * four.i) * wf2(ss + 3 * four.j) *
-                                 wf3(rr + 3 * four.k) * wf3(ll + 3 * four.l) *
+                                 wf3(rr + 3 * four.k) * wf4(ll + 3 * four.l) *
                                  four.ifc(tt, ss, rr, ll);
         vp += prefactor * contr;
     }
@@ -525,17 +525,21 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
 
     double population_factor;
 
+    /*if (sp2.omega[this->alpha[1]] <= 1.25 ||
+        sp3.omega[this->alpha[2]] <= 1.25 ||
+        sp4.omega[this->alpha[3]] <= 1.25  ) return 0.0;*/
+
     if (this->type == fourph_type::recombination) {
-        population_factor = fBE2 * fBE3 - (fBE2 + fBE3 + 1.0) * fBE4;
+        population_factor = fBE2*fBE3*(1.0+fBE4)-(1.0+fBE2)*(1.0+fBE3)*fBE4;
     }
-    else if (this->type  == fourph_type::splitting) {
-	    population_factor = fBE2 * fBE3 + fBE2 * fBE4 + fBE2 + fBE3 * fBE4 + fBE3 + fBE4 + 1.0;
+    else if (this->type  == fourph_type::redistribution) {
+	population_factor = fBE2*(1.0+fBE3)*(1.0+fBE4)-(1.0+fBE2)*fBE3*fBE4;
     }
     else {	
-	    population_factor = fBE2 * ( fBE3 + fBE4 + 1.0) - fBE3 * fBE4;
+	population_factor = (1.0+fBE2)*(1.0+fBE3)*(1.0+fBE4)-fBE2*fBE3*fBE4;
     }
 
-    return prefactor * population_factor * g * vp2 / grid.nqpoints / sp1.omega[this->alpha[0]] /
+    return prefactor * population_factor * g * vp2 / grid.nqpoints / grid.nqpoints / sp1.omega[this->alpha[0]] /
            sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]];
 }
 
@@ -554,7 +558,7 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma_reduced(c
     auto fBE3 = bose_einstein(sp3.omega[this->alpha[2]], T);
     auto fBE4 = bose_einstein(sp4.omega[this->alpha[3]], T);
 
-    return prefactor * g * vp2 / grid.nqpoints / sp1.omega[this->alpha[0]] / 
+    return prefactor * g * vp2 / grid.nqpoints / grid.nqpoints / sp1.omega[this->alpha[0]] / 
            sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]];
 }
 

@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
 
             for (int nbranch = 0; nbranch < Nbranches; nbranch++) {
                 // scattering rate
-                double my_w0 = w0(nbranch, nq);
+                double my_w0 = w4(nbranch, nq);
 
                 // relaxation time [seconds]
                 double tau0 = (my_w0 == 0.) ? 0. : (1e-12 / my_w0);
