@@ -43,17 +43,17 @@ double  interface_conductance(const Crystal_structure& poscar,
 
       for (decltype(nq) iq = qjobs[0]; iq < qjobs[1]; iq++){
           auto sp = grid.get_spectrum_at_q(iq);
-	  for (decltype(nbands) ib = 0; ib < nbands; ib++){
-	      double omega = sp.omega(ib); 
-	      double vproj = axis.dot(sp.vg.col(ib).matrix());
-	      // Ignore non-incident modes, primive Gamma and zero-frequency
-	      if (almost_equal(omega,0.) or vproj < 0. or almost_equal(vproj,0.))
-	          continue;
+            for (decltype(nbands) ib = 0; ib < nbands; ib++){
+                double omega = sp.omega(ib);
+                double vproj = axis.dot(sp.vg.col(ib).matrix());
+                // Ignore non-incident modes, primive Gamma and zero-frequency
+                if (almost_equal(omega,0.) or vproj < 0. or almost_equal(vproj,0.))
+                    continue;
 
-	      double cv = bose_einstein_kernel(omega,Tref);
+                double cv = bose_einstein_kernel(omega,Tref);
 
-	      conductance_proc += vproj * alpha(ib,iq) * cv; 
-	  }
+                conductance_proc += vproj * alpha(ib,iq) * cv;
+            }
       }
 
       boost::mpi::all_reduce(world, conductance_proc, conductance, std::plus<double>());

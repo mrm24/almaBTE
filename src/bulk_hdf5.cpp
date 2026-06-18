@@ -19,6 +19,9 @@
 #include <cstdint>
 #include <H5Cpp.h>
 #include <bulk_hdf5.hpp>
+#include <fstream>
+#include <msgpack.hpp>
+#include <filesystem>
 
 // There seems to be no way to avoid this "using" without
 // causing a lot of compilation problems.
@@ -453,167 +456,44 @@ void save_bulk_hdf5(const char* filename,
                     &(other[i].vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
             }
         }
-
-
-        // Allowed four-phonon processes. See processes.hpp for
-        // details.
-        {
-            hsize_t c_dims[] = {nprocs_4ph};
-            DataSpace c_dspace(1, c_dims);
-            DataSet c_dset = h5f.createDataSet(
-                "/fourph_processes/class", PredType::STD_U64LE, c_dspace);
-            hsize_t q_dims[] = {nprocs_4ph, 4};
-            DataSpace q_dspace(2, q_dims);
-            DataSet q_dset = h5f.createDataSet(
-                "/fourph_processes/q", PredType::STD_U64LE, q_dspace);
-            DataSet alpha_dset = h5f.createDataSet(
-                "/fourph_processes/alpha", PredType::STD_U64LE, q_dspace);
-            // This dataset summarized the data in the "type",
-            // "gaussian_computed" and "vp2_computed" attributes.
-            // It is built as a bitmask with bits 0, 1 and 2 selecting
-            // between the two possible values of these attributes,
-            // respectively.
-            DataSet type_dset = h5f.createDataSet(
-                "/fourph_processes/type", PredType::STD_U8LE, c_dspace);
-            DataSet domega_dset = h5f.createDataSet(
-                "/fourph_processes/domega", PredType::IEEE_F64LE, c_dspace);
-            DataSet sigma_dset = h5f.createDataSet(
-                "/fourph_processes/sigma", PredType::IEEE_F64LE, c_dspace);
-            DataSet gaussian_dset = h5f.createDataSet(
-                "/fourph_processes/gaussian", PredType::IEEE_F64LE, c_dspace);
-            DataSet vp2_dset = h5f.createDataSet(
-                "/fourph_processes/vp2", PredType::IEEE_F64LE, c_dspace);
-            write_string_attribute(domega_dset, "Units", "rad / ps");
-            write_string_attribute(sigma_dset, "Units", "rad / ps");
-            write_string_attribute(gaussian_dset, "Units", "ps / rad");
-
-            write_string_attribute(vp2_dset, "Units", "THz**4 / (kg**4 nm**4)");
-            hsize_t q_pos[] = {0, 0};
-            hsize_t q_count[] = {1, 4};
-            hsize_t q_dims_m[] = {4};
-            DataSpace q_dspace_m(1, q_dims_m);
-            q_dspace_m.selectAll();
-
-            // Begin by three-phonon processes identified by this
-            // MPI process.
-            for (hsize_t i = 0; i < my_nprocs_4ph; ++i) {
-                c_dspace.selectElements(H5S_SELECT_SET, 1, &i);
-                q_pos[0] = i;
-                q_dspace.selectHyperslab(H5S_SELECT_SET, q_count, q_pos);
-                c_dset.write(
-                    &(processes_4ph[i].c), PredType::NATIVE_SIZE_T, scalar, c_dspace);
-                q_dset.write(processes_4ph[i].q.data(),
-                            PredType::NATIVE_SIZE_T,
-                            q_dspace_m,
-                            q_dspace);
-                alpha_dset.write(processes_4ph[i].alpha.data(),
-                                PredType::NATIVE_SIZE_T,
-                                q_dspace_m,
-                                q_dspace);
-                                
-                std::bitset<8> mask(0u);
-
-                if (processes_4ph[i].type == fourph_type::recombination) {
-                    mask.set(RECOMBINATION_BIT);
-                } else if (processes_4ph[i].type == fourph_type::redistribution) {
-                    mask.set(REDISTRIBUTION_BIT);
-                } else {
-                    mask.set(SPLITTING_BIT);
-                }
-
-                if (processes_4ph[i].gaussian_computed)
-                    mask.set(GAUSSIAN_BIT);
-
-                if (processes_4ph[i].vp2_computed)
-                    mask.set(VP2_BIT);
-
-                uint8_t short_mask = static_cast<uint8_t>(mask.to_ulong());
-                type_dset.write(
-                    &short_mask, PredType::NATIVE_UINT8, scalar, c_dspace);
-                domega_dset.write(&(processes_4ph[i].domega),
-                                PredType::NATIVE_DOUBLE,
-                                scalar,
-                                c_dspace);
-                sigma_dset.write(&(processes_4ph[i].sigma),
-                                PredType::NATIVE_DOUBLE,
-                                scalar,
-                                c_dspace);
-                gaussian_dset.write(&(processes_4ph[i].gaussian),
-                                    PredType::NATIVE_DOUBLE,
-                                    scalar,
-                                    c_dspace);
-                vp2_dset.write(
-                    &(processes_4ph[i].vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
-            }
-            // And proceed with the remaining MPI processes.
-            std::vector<Fourph_process> other;
-
-            for (auto ip = 1; ip < comm.size(); ++ip) {
-                other.clear();
-                comm.recv(ip, 0, other);
-                auto other_nproc = other.size();
-
-                for (hsize_t i = 0; i < other_nproc; ++i) {
-                    ++q_pos[0];
-                    c_dspace.selectElements(H5S_SELECT_SET, 1, &(q_pos[0]));
-                    q_dspace.selectHyperslab(H5S_SELECT_SET, q_count, q_pos);
-                    c_dset.write(
-                        &(other[i].c), PredType::NATIVE_SIZE_T, scalar, c_dspace);
-                    q_dset.write(other[i].q.data(),
-                                PredType::NATIVE_SIZE_T,
-                                q_dspace_m,
-                                q_dspace);
-                    alpha_dset.write(other[i].alpha.data(),
-                                    PredType::NATIVE_SIZE_T,
-                                    q_dspace_m,
-                                    q_dspace);
-
-                    std::bitset<8> mask(0u);
-
-                    if (processes_4ph[i].type == fourph_type::recombination) {
-                        mask.set(RECOMBINATION_BIT);
-                    } else if (processes_4ph[i].type == fourph_type::redistribution) {
-                        mask.set(REDISTRIBUTION_BIT);
-                    } else {
-                        mask.set(SPLITTING_BIT);
-                    }
-
-
-                    if (other[i].gaussian_computed)
-                        mask.set(GAUSSIAN_BIT);
-
-                    if (other[i].vp2_computed)
-                        mask.set(VP2_BIT);
-                    uint8_t short_mask = static_cast<uint8_t>(mask.to_ulong());
-                    type_dset.write(
-                        &short_mask, PredType::NATIVE_UINT8, scalar, c_dspace);
-                    domega_dset.write(&(other[i].domega),
-                                    PredType::NATIVE_DOUBLE,
-                                    scalar,
-                                    c_dspace);
-                    sigma_dset.write(&(other[i].sigma),
-                                    PredType::NATIVE_DOUBLE,
-                                    scalar,
-                                    c_dspace);
-                    gaussian_dset.write(&(other[i].gaussian),
-                                        PredType::NATIVE_DOUBLE,
-                                        scalar,
-                                        c_dspace);
-                    vp2_dset.write(
-                        &(other[i].vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
-                }
-            }
-        }
     }
     else {
         // The remaining MPI processes just need to send their
         // data to process 0.
         comm.send(0, 0, processes_3ph);
+    }
 
-        // For four processes do something in case one has 4ph
-        // vector populated
-        if (nprocs_4ph > 0) comm.send(0, 0, processes_4ph);
-    }   
+    /// Four phonon process are not efficiently 
+    /// handled by HDF5. We are saving them using 
+    /// MSGPACK
+    if (nprocs_4ph == 0) return;
+
+    std::string filename_4ph(filename);
+    filename_4ph.replace(filename_4ph.find(".h5"), 3, ".4ph.msgpack");
+
+    /// The master
+    comm.barrier();
+    if (comm.rank() == 0) {
+        std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::trunc);
+        if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
+        msgpack::pack(ofs, static_cast<std::uint64_t>(nprocs_4ph));
+        for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
+        ofs.flush();
+        ofs.close();
+    }
+    comm.barrier();
+    
+    /// The other processes append
+    for (auto iproc = 1; iproc < comm.size(); iproc++) {
+        if (iproc == comm.rank()) {
+            std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::app);
+            if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
+            for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
+            ofs.flush();
+            ofs.close();
+        }
+        comm.barrier();
+    }
 }
 
 
@@ -1011,117 +891,61 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
     // Create an empty vector of Fourph_process objects.
     auto nruter5 = alma::make_unique<std::vector<Fourph_process>>();
 
-    if (my_id == 0) {
-        DataSet c_dset = h5f->openDataSet("/fourph_processes/class");
-        DataSet q_dset = h5f->openDataSet("/fourph_processes/q");
-        DataSet alpha_dset = h5f->openDataSet("/fourph_processes/alpha");
-        DataSet type_dset = h5f->openDataSet("/fourph_processes/type");
-        DataSet domega_dset = h5f->openDataSet("/fourph_processes/domega");
-        DataSet sigma_dset = h5f->openDataSet("/fourph_processes/sigma");
-        DataSet gaussian_dset = h5f->openDataSet("/fourph_processes/gaussian");
-        DataSet vp2_dset = h5f->openDataSet("/fourph_processes/vp2");
-        DataSpace c_dspace = c_dset.getSpace();
-        DataSpace q_dspace = q_dset.getSpace();
-        // Read the total number of three-phonon processes
-        // stored in the file.
-        hsize_t nprocs;
-        c_dspace.getSimpleExtentDims(&nprocs, nullptr);
-        auto nmpi = comm.size();
-        // Read the first few for process 0 and send the rest
-        // to the other MPI processes.
-        hsize_t q_pos[] = {0, 0};
-        hsize_t q_count[] = {1, 4};
-        hsize_t q_dims_m[] = {4};
-        std::size_t c_value;
-        std::array<std::size_t, 4> q_value;
-        std::array<std::size_t, 4> alpha_value;
-        uint8_t short_mask;
-        double domega_value;
-        double sigma_value;
-        DataSpace q_dspace_m(1, q_dims_m);
+    std::string filename_4ph(filename);
+    filename_4ph.replace(filename_4ph.find(".h5"), 3, ".4ph.msgpack");
 
-        for (decltype(nmpi) impi = 0; impi < nmpi; ++impi) {
-            std::vector<Fourph_process> other;
-            auto limits = my_jobs(nprocs, nmpi, impi);
+    auto FourPhononsFiles = std::filesystem::exists(filename_4ph);
+    
+    if (FourPhononsFiles) {
+        std::ifstream ifs(filename_4ph, std::ios::binary);
+        if (!ifs) throw std::runtime_error("Failed to open file for reading: " + filename_4ph);
 
-            if (impi != 0) {
-                other.reserve(limits[1] - limits[0]);
-                comm.send(impi, 0, limits[1] - limits[0]);
-            }
+        msgpack::unpacker pac;
+        auto read_more = [&](std::size_t want) {
+            // Ensure unpacker has room, read from file into its internal buffer
+            pac.reserve_buffer(want);
+            ifs.read(pac.buffer(), want);
+            std::streamsize got = ifs.gcount();
+            if (got <= 0) return std::size_t(0);
+            pac.buffer_consumed(static_cast<std::size_t>(got));
+            return static_cast<std::size_t>(got);
+        };
 
-            for (hsize_t i = limits[0]; i < limits[1]; ++i) {
-                c_dspace.selectElements(H5S_SELECT_SET, 1, &i);
-                q_pos[0] = i;
-                q_dspace.selectHyperslab(H5S_SELECT_SET, q_count, q_pos);
-                c_dset.read(
-                    &c_value, PredType::NATIVE_SIZE_T, scalar, c_dspace);
-                q_dset.read(q_value.data(),
-                            PredType::NATIVE_SIZE_T,
-                            q_dspace_m,
-                            q_dspace);
-                alpha_dset.read(alpha_value.data(),
-                                PredType::NATIVE_SIZE_T,
-                                q_dspace_m,
-                                q_dspace);
-                type_dset.read(
-                    &short_mask, PredType::NATIVE_UINT8, scalar, c_dspace);
-                std::bitset<8> mask(static_cast<unsigned long>(short_mask));
-                domega_dset.read(
-                    &domega_value, PredType::NATIVE_DOUBLE, scalar, c_dspace);
-                sigma_dset.read(
-                    &sigma_value, PredType::NATIVE_DOUBLE, scalar, c_dspace);
-                fourph_type type_value;
-                    (mask.test(ABSORPTION_BIT) ? threeph_type::absorption
-                                               : threeph_type::emission);
-                
-                if (mask.test(RECOMBINATION_BIT)) {
-                    type_value = fourph_type::recombination;
-                } else if (mask.test(REDISTRIBUTION_BIT)) {
-                    type_value = fourph_type::redistribution;
-                } else {
-                    type_value = fourph_type::splitting;
-                }
+        constexpr std::size_t chunk_size = 5 << 20; // 5 MB at a time, it is more than enough to hold several 4ph objects
 
-
-                
-                Fourph_process p(c_value,
-                                 q_value,
-                                 alpha_value,
-                                 type_value,
-                                 domega_value,
-                                 sigma_value);
-
-                if (mask.test(GAUSSIAN_BIT)) {
-                    p.gaussian_computed = true;
-                    gaussian_dset.read(&(p.gaussian),
-                                       PredType::NATIVE_DOUBLE,
-                                       scalar,
-                                       c_dspace);
-                }
-
-                if (mask.test(VP2_BIT)) {
-                    p.vp2_computed = true;
-                    vp2_dset.read(
-                        &(p.vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
-                }
-
-                if (impi == 0)
-                    nruter5->emplace_back(p);
-                else
-                    other.emplace_back(p);
-            }
-
-            if (impi != 0)
-                comm.send(impi, 0, other);
+        /// Read the size
+        msgpack::object_handle oh;
+        while (!pac.next(oh)) {
+            if (read_more(chunk_size) == 0)
+                throw std::runtime_error("Unexpected EOF reading from " + filename_4ph);
         }
-    }
-    else {
-        std::size_t toreserve;
-        comm.recv(0, 0, toreserve);
-        nruter4->reserve(toreserve);
-        comm.recv(0, 0, *nruter5);
-    }
+        std::size_t n4ph = oh.get().as<std::uint64_t>();
 
+        auto limits = alma::my_jobs(n4ph, comm.size(), comm.rank());
+        nruter5->reserve(limits[1] - limits[0]);
+
+        // Skip records before limits[0] 
+        for (std::size_t i = 0; i < limits[0]; ++i) {
+            while (!pac.next(oh)) {
+                if (read_more(chunk_size) == 0)
+                    throw std::runtime_error("Unexpected EOF while skipping entries in " + filename_4ph);
+            }
+        }
+
+        // Read this rank's chunk [limits[0], limits[1]) ---
+        for (std::size_t i = limits[0]; i < limits[1]; ++i) {
+            while (!pac.next(oh)) {
+                if (read_more(chunk_size) == 0)
+                    throw std::runtime_error("Unexpected EOF while reading rank's (" + 
+                        std::to_string(comm.rank()) + ") entries in " + filename_4ph);
+            }
+            Fourph_process p(0, {0,0,0,0},{0,0,0,0}, alma::fourph_type::recombination, 0., 0.);
+            oh.get().convert(p);
+            nruter5->emplace_back(p);
+        }
+
+        ifs.close();
+    }
 
     // Return a tuple with all objects.
     return std::make_tuple(description,

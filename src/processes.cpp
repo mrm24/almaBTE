@@ -368,7 +368,6 @@ std::vector<Fourph_process> find_allowed_fourph(
         auto iq2 = ijob % grid.nqpoints;
         auto coords2 = grid.one_to_three(iq2);
         auto spectrum2 = grid.get_spectrum_at_q(iq2);
-        decltype(coords2) coords3;
 
         for (std::size_t iq3 = 0; iq3 < grid.nqpoints; ++iq3) {
             auto coords3 = grid.one_to_three(iq3);
@@ -525,18 +524,14 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
 
     double population_factor;
 
-    /*if (sp2.omega[this->alpha[1]] <= 1.25 ||
-        sp3.omega[this->alpha[2]] <= 1.25 ||
-        sp4.omega[this->alpha[3]] <= 1.25  ) return 0.0;*/
-
     if (this->type == fourph_type::recombination) {
         population_factor = fBE2*fBE3*(1.0+fBE4)-(1.0+fBE2)*(1.0+fBE3)*fBE4;
     }
     else if (this->type  == fourph_type::redistribution) {
-	population_factor = fBE2*(1.0+fBE3)*(1.0+fBE4)-(1.0+fBE2)*fBE3*fBE4;
+	    population_factor = fBE2*(1.0+fBE3)*(1.0+fBE4)-(1.0+fBE2)*fBE3*fBE4;
     }
     else {	
-	population_factor = (1.0+fBE2)*(1.0+fBE3)*(1.0+fBE4)-fBE2*fBE3*fBE4;
+	    population_factor = (1.0+fBE2)*(1.0+fBE3)*(1.0+fBE4)-fBE2*fBE3*fBE4;
     }
 
     return prefactor * population_factor * g * vp2 / grid.nqpoints / grid.nqpoints / sp1.omega[this->alpha[0]] /
@@ -554,9 +549,6 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma_reduced(c
     auto sp2 = grid.get_spectrum_at_q(this->q[1]);
     auto sp3 = grid.get_spectrum_at_q(this->q[2]);
     auto sp4 = grid.get_spectrum_at_q(this->q[3]);
-    auto fBE2 = bose_einstein(sp2.omega[this->alpha[1]], T);
-    auto fBE3 = bose_einstein(sp3.omega[this->alpha[2]], T);
-    auto fBE4 = bose_einstein(sp4.omega[this->alpha[3]], T);
 
     return prefactor * g * vp2 / grid.nqpoints / grid.nqpoints / sp1.omega[this->alpha[0]] / 
            sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]];
