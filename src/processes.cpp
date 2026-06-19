@@ -358,6 +358,7 @@ std::vector<Fourph_process> find_allowed_fourph(
     // the conservation of energy.  
     
     std::vector<Fourph_process> nruter;
+    const double inv_sqrt_twopi = 1.0 / std::sqrt(2.0 * alma::constants::pi);
 
     for (auto ijob = limits[0]; ijob < limits[1]; ++ijob) {
         auto ic  = ijob / grid.nqpoints;
@@ -403,7 +404,7 @@ std::vector<Fourph_process> find_allowed_fourph(
 
                                 if (delta <= constants::nsigma * sigma) {
                                     /// For cases in which sigma is 0 and energy is conserved
-                                    if (alma::almost_equal(sigma, 0.)) sigma = std::numbers::inv_sqrtpi_v<double>;
+                                    if (alma::almost_equal(sigma, 0.)) sigma = inv_sqrt_twopi;
                                     nruter.emplace_back(Fourph_process(
                                         ic,
                                         std::array<std::size_t, 4>(
