@@ -482,20 +482,20 @@ void save_bulk_hdf5(const char* filename,
     if (comm.rank() == 0) {
         std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::trunc);
         if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
-        // msgpack::pack(ofs, static_cast<std::uint64_t>(nprocs_4ph));
-        // for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
-        ofs << nprocs_4ph;
+        ofs.write(reinterpret_cast<const char*>(&nprocs_4ph), sizeof(nprocs_4ph));
+
         for (const auto& elem : processes_4ph) {
-            ofs << elem.c;
-            for (const auto& x : elem.q) ofs << x;
-            for (const auto& x : elem.alpha) ofs << x;
-            ofs << static_cast<int>(elem.type)
-                << elem.domega
-                << elem.sigma
-                << elem.vp2_computed
-                << elem.gaussian_computed
-                << elem.vp2
-                << elem.gaussian;
+            ofs.write(reinterpret_cast<const char*>(&elem.c), sizeof(elem.c));
+            ofs.write(reinterpret_cast<const char*>(elem.q.data()), 4 * sizeof(elem.c));
+            ofs.write(reinterpret_cast<const char*>(elem.alpha.data()), 4 *sizeof(elem.c));
+            int type_int = static_cast<int>(elem.type);
+            ofs.write(reinterpret_cast<const char*>(&type_int), sizeof(type_int));
+            ofs.write(reinterpret_cast<const char*>(&elem.domega), sizeof(elem.domega));
+            ofs.write(reinterpret_cast<const char*>(&elem.sigma), sizeof(elem.sigma));
+            ofs.write(reinterpret_cast<const char*>(&elem.vp2_computed), sizeof(elem.vp2_computed));
+            ofs.write(reinterpret_cast<const char*>(&elem.gaussian_computed), sizeof(elem.gaussian_computed));
+            ofs.write(reinterpret_cast<const char*>(&elem.vp2), sizeof(elem.vp2));
+            ofs.write(reinterpret_cast<const char*>(&elem.gaussian), sizeof(elem.gaussian));
         }
 
         ofs.flush();
@@ -510,16 +510,17 @@ void save_bulk_hdf5(const char* filename,
             if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
             // for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
             for (const auto& elem : processes_4ph) {
-                ofs << elem.c;
-                for (const auto& x : elem.q) ofs << x;
-                for (const auto& x : elem.alpha) ofs << x;
-                ofs << static_cast<int>(elem.type)
-                    << elem.domega
-                    << elem.sigma
-                    << elem.vp2_computed
-                    << elem.gaussian_computed
-                    << elem.vp2
-                    << elem.gaussian;
+                ofs.write(reinterpret_cast<const char*>(&elem.c), sizeof(elem.c));
+                ofs.write(reinterpret_cast<const char*>(elem.q.data()), 4 * sizeof(elem.c));
+                ofs.write(reinterpret_cast<const char*>(elem.alpha.data()), 4 *sizeof(elem.c));
+                int type_int = static_cast<int>(elem.type);
+                ofs.write(reinterpret_cast<const char*>(&type_int), sizeof(type_int));
+                ofs.write(reinterpret_cast<const char*>(&elem.domega), sizeof(elem.domega));
+                ofs.write(reinterpret_cast<const char*>(&elem.sigma), sizeof(elem.sigma));
+                ofs.write(reinterpret_cast<const char*>(&elem.vp2_computed), sizeof(elem.vp2_computed));
+                ofs.write(reinterpret_cast<const char*>(&elem.gaussian_computed), sizeof(elem.gaussian_computed));
+                ofs.write(reinterpret_cast<const char*>(&elem.vp2), sizeof(elem.vp2));
+                ofs.write(reinterpret_cast<const char*>(&elem.gaussian), sizeof(elem.gaussian));
             }
             ofs.flush();
             ofs.close();
@@ -948,7 +949,7 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         alma::fourph_type type;
 
         /// Read the number of 4ph processes
-        ifs >> n4ph;
+        ifs.read(reinterpret_cast<char*>(&n4ph), sizeof(n4ph));
 
         /// Get what is stored here
         auto limits = alma::my_jobs(n4ph, comm.size(), comm.rank());
@@ -962,17 +963,18 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
 
         /// Read objects on my section
         for (std::size_t i = limits[0]; i < limits[1]; i++) {
-            ifs >> c;
-            for (auto& x : q) ifs >> x;
-            for (auto& x : alpha) ifs >> x;
-
-            ifs >> type_int
-                >> domega
-                >> sigma
-                >> vp2_computed
-                >> gaussian_computed
-                >> vp2
-                >> gaussian;
+            
+            ifs.read(reinterpret_cast<char*>(&c), sizeof(c));
+            ifs.read(reinterpret_cast<char*>(q.data()), 4 * sizeof(c));
+            ifs.read(reinterpret_cast<char*>(alpha.data()), 4 * sizeof(c));
+            ifs.read(reinterpret_cast<char*>(&type_int), sizeof(type_int));
+            ifs.read(reinterpret_cast<char*>(&domega), sizeof(domega));
+            ifs.read(reinterpret_cast<char*>(&sigma), sizeof(sigma));
+            ifs.read(reinterpret_cast<char*>(&vp2_computed), sizeof(vp2_computed));
+            ifs.read(reinterpret_cast<char*>(&gaussian_computed), sizeof(gaussian_computed));
+            ifs.read(reinterpret_cast<char*>(&vp2), sizeof(vp2));
+            ifs.read(reinterpret_cast<char*>(&gaussian), sizeof(gaussian));
+            
             type = static_cast<alma::fourph_type>(type_int);
 
             Fourph_process p(c, q, alpha, type, domega, sigma);
