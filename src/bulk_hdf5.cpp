@@ -20,11 +20,8 @@
 #include <H5Cpp.h>
 #include <bulk_hdf5.hpp>
 #include <fstream>
-// #include <msgpack.hpp>
+#include <msgpack.hpp>
 #include <filesystem>
-
-#include <boost/archive/text_oarchive.hpp>
-#include <boost/archive/text_iarchive.hpp>
 
 // There seems to be no way to avoid this "using" without
 // causing a lot of compilation problems.
@@ -479,11 +476,8 @@ void save_bulk_hdf5(const char* filename,
     if (comm.rank() == 0) {
         std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::trunc);
         if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
-        // msgpack::pack(ofs, static_cast<std::uint64_t>(nprocs_4ph));
-        // for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
-        boost::archive::text_oarchive oa(ofs, boost::archive::no_header);
-        oa << nprocs_4ph;
-        for (const auto& elem : processes_4ph) oa << elem;
+        msgpack::pack(ofs, static_cast<std::uint64_t>(nprocs_4ph));
+        for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
         ofs.flush();
         ofs.close();
     }
@@ -494,9 +488,7 @@ void save_bulk_hdf5(const char* filename,
         if (iproc == comm.rank()) {
             std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::app);
             if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
-            // for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
-            boost::archive::text_oarchive oa(ofs, boost::archive::no_header);
-            for (const auto& elem : processes_4ph) oa << elem;
+            for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
             ofs.flush();
             ofs.close();
         }
@@ -907,20 +899,48 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
     if (FourPhononsFiles) {
         std::ifstream ifs(filename_4ph, std::ios::binary);
         if (!ifs) throw std::runtime_error("Failed to open file for reading: " + filename_4ph);
-        boost::archive::text_iarchive ia(ifs, boost::archive::no_header);
 
-        std::size_t n4ph = 0;
-        ia >> n4ph;
+        msgpack::unpacker pac;
+        auto read_more = [&](std::size_t want) {
+            // Ensure unpacker has room, read from file into its internal buffer
+            pac.reserve_buffer(want);
+            ifs.read(pac.buffer(), want);
+            std::streamsize got = ifs.gcount();
+            if (got <= 0) return std::size_t(0);
+            pac.buffer_consumed(static_cast<std::size_t>(got));
+            return static_cast<std::size_t>(got);
+        };
+
+        constexpr std::size_t chunk_size = 5 << 20; // 5 MB at a time, it is more than enough to hold several 4ph objects
+
+        /// Read the size
+        msgpack::object_handle oh;
+        while (!pac.next(oh)) {
+            if (read_more(chunk_size) == 0)
+                throw std::runtime_error("Unexpected EOF reading from " + filename_4ph);
+        }
+        std::size_t n4ph = oh.get().as<std::uint64_t>();
 
         auto limits = alma::my_jobs(n4ph, comm.size(), comm.rank());
         nruter5->reserve(limits[1] - limits[0]);
 
-        Fourph_process skip(0, {0,0,0,0}, {0,0,0,0}, alma::fourph_type::recombination, 0., 0.);
-        for (std::size_t i = 0; i < limits[0]; ++i) ia >> skip;
+        // Skip records before limits[0] 
+        for (std::size_t i = 0; i < limits[0]; ++i) {
+            while (!pac.next(oh)) {
+                if (read_more(chunk_size) == 0)
+                    throw std::runtime_error("Unexpected EOF while skipping entries in " + filename_4ph);
+            }
+        }
 
+        // Read this rank's chunk [limits[0], limits[1]) ---
         for (std::size_t i = limits[0]; i < limits[1]; ++i) {
-            Fourph_process p(0, {0,0,0,0}, {0,0,0,0}, alma::fourph_type::recombination, 0., 0.);
-            ia >> p;
+            while (!pac.next(oh)) {
+                if (read_more(chunk_size) == 0)
+                    throw std::runtime_error("Unexpected EOF while reading rank's (" + 
+                        std::to_string(comm.rank()) + ") entries in " + filename_4ph);
+            }
+            Fourph_process p(0, {0,0,0,0},{0,0,0,0}, alma::fourph_type::splitting, 0., 0.);
+            oh.get().convert(p);
             nruter5->emplace_back(p);
         }
 
