@@ -35,9 +35,9 @@ set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
 # Find MSGPACK which is used to save the 4ph processes
-find_path(MSGPACK_INCLUDE_DIRS NAMES msgpack.hpp HINTS ${CMAKE_SOURCE_DIR}/external/msgpack-c-cpp-8.0.0/include REQUIRED)
-include_directories(${MSGPACK_INCLUDE_DIRS})
-message(STATUS "Using MSGPACK: ${MSGPACK_INCLUDE_DIRS}")
+# find_path(MSGPACK_INCLUDE_DIRS NAMES msgpack.hpp HINTS ${CMAKE_SOURCE_DIR}/external/msgpack-c-cpp-8.0.0/include REQUIRED)
+# include_directories(${MSGPACK_INCLUDE_DIRS})
+# message(STATUS "Using MSGPACK: ${MSGPACK_INCLUDE_DIRS}")
 
 # Try to associate an HDF5 type to std::size_t.
 include(CheckTypeSize)
