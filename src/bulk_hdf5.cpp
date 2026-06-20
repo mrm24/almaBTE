@@ -413,7 +413,8 @@ void save_bulk_hdf5(const char* filename,
             comm.recv(ip, 0, other);
             auto other_nproc = other.size();
 
-            std::cout << "# Working in 3ph - slice " <<  ip << ' / ' << comm.size() << std::endl;
+            std::cout << "# Working in 3ph - process " <<  ip << ' / ' << comm.size() << std::endl;
+            std::cout << std::flush;
 
             for (hsize_t i = 0; i < other_nproc; ++i) {
                 ++q_pos[0];
@@ -851,6 +852,9 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
         for (decltype(nmpi) impi = 0; impi < nmpi; ++impi) {
             std::vector<Threeph_process> other;
             auto limits = my_jobs(nprocs, nmpi, impi);
+
+            std::cout << "# Working in 3ph - process " <<  impi << ' / ' << nmpi << std::endl;
+            std::cout << std::flush;
 
             if (impi != 0) {
                 other.reserve(limits[1] - limits[0]);
