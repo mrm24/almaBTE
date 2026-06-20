@@ -293,7 +293,9 @@ Eigen::ArrayXXd calc_w0_threeph(
     std::vector<alma::Threeph_process>& processes,
     double T,
     std::function<bool(const Threeph_process&)> filter,
-    const boost::mpi::communicator& comm) {const double prefactor = 1e6 * constants::hbar * constants::pi / 4.0;
+    const boost::mpi::communicator& comm) {
+    
+    const double prefactor = 1e6 * constants::hbar * constants::pi / 4.0;
     auto nqpoints = grid.nqpoints;
     auto nmodes = grid.get_spectrum_at_q(0).omega.size();
 
@@ -528,13 +530,13 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
     double population_factor;
 
     if (this->type == fourph_type::recombination) {
-        population_factor = fBE2*fBE3*(1.0+fBE4)-(1.0+fBE2)*(1.0+fBE3)*fBE4;
+        population_factor = fBE2*fBE3 - fBE2*fBE4 - fBE3*fBE4 - fBE4;
     }
     else if (this->type  == fourph_type::redistribution) {
-	    population_factor = fBE2*(1.0+fBE3)*(1.0+fBE4)-(1.0+fBE2)*fBE3*fBE4;
+	    population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2 - fBE3*fBE4;
     }
     else {	
-	    population_factor = (1.0+fBE2)*(1.0+fBE3)*(1.0+fBE4)-fBE2*fBE3*fBE4;
+	    population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2  + fBE3*fBE4 + fBE3 + fBE4 + 1.0;
     }
 
     return prefactor * population_factor * g * vp2 / grid.nqpoints / grid.nqpoints / sp1.omega[this->alpha[0]] /

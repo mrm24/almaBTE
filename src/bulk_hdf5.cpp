@@ -23,6 +23,9 @@
 // #include <msgpack.hpp>
 #include <filesystem>
 
+#include <boost/archive/text_oarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+
 // There seems to be no way to avoid this "using" without
 // causing a lot of compilation problems.
 #ifndef H5_NO_NAMESPACE
@@ -413,9 +416,6 @@ void save_bulk_hdf5(const char* filename,
             comm.recv(ip, 0, other);
             auto other_nproc = other.size();
 
-            std::cout << "# Working in 3ph - process " <<  ip << ' / ' << comm.size() << std::endl;
-            std::cout << std::flush;
-
             for (hsize_t i = 0; i < other_nproc; ++i) {
                 ++q_pos[0];
                 c_dspace.selectElements(H5S_SELECT_SET, 1, &(q_pos[0]));
@@ -458,9 +458,6 @@ void save_bulk_hdf5(const char* filename,
                 vp2_dset.write(
                     &(other[i].vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
             }
-
-            h5f.flush(H5F_SCOPE_LOCAL);
-
         }
     }
     else {
@@ -475,29 +472,18 @@ void save_bulk_hdf5(const char* filename,
     if (nprocs_4ph == 0) return;
 
     std::string filename_4ph(filename);
-    filename_4ph.replace(filename_4ph.find(".h5"), 3, ".4ph");
+    filename_4ph.replace(filename_4ph.find(".h5"), 3, ".4ph.msgpack");
 
     /// The master
     comm.barrier();
     if (comm.rank() == 0) {
         std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::trunc);
         if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
-        ofs.write(reinterpret_cast<const char*>(&nprocs_4ph), sizeof(nprocs_4ph));
-
-        for (const auto& elem : processes_4ph) {
-            ofs.write(reinterpret_cast<const char*>(&elem.c), sizeof(elem.c));
-            ofs.write(reinterpret_cast<const char*>(elem.q.data()), 4 * sizeof(elem.c));
-            ofs.write(reinterpret_cast<const char*>(elem.alpha.data()), 4 *sizeof(elem.c));
-            int type_int = static_cast<int>(elem.type);
-            ofs.write(reinterpret_cast<const char*>(&type_int), sizeof(type_int));
-            ofs.write(reinterpret_cast<const char*>(&elem.domega), sizeof(elem.domega));
-            ofs.write(reinterpret_cast<const char*>(&elem.sigma), sizeof(elem.sigma));
-            ofs.write(reinterpret_cast<const char*>(&elem.vp2_computed), sizeof(elem.vp2_computed));
-            ofs.write(reinterpret_cast<const char*>(&elem.gaussian_computed), sizeof(elem.gaussian_computed));
-            ofs.write(reinterpret_cast<const char*>(&elem.vp2), sizeof(elem.vp2));
-            ofs.write(reinterpret_cast<const char*>(&elem.gaussian), sizeof(elem.gaussian));
-        }
-
+        // msgpack::pack(ofs, static_cast<std::uint64_t>(nprocs_4ph));
+        // for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
+        boost::archive::text_oarchive oa(ofs, boost::archive::no_header);
+        oa << nprocs_4ph;
+        for (const auto& elem : processes_4ph) oa << elem;
         ofs.flush();
         ofs.close();
     }
@@ -509,19 +495,8 @@ void save_bulk_hdf5(const char* filename,
             std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::app);
             if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
             // for (const auto& elem : processes_4ph) msgpack::pack(ofs, elem);
-            for (const auto& elem : processes_4ph) {
-                ofs.write(reinterpret_cast<const char*>(&elem.c), sizeof(elem.c));
-                ofs.write(reinterpret_cast<const char*>(elem.q.data()), 4 * sizeof(elem.c));
-                ofs.write(reinterpret_cast<const char*>(elem.alpha.data()), 4 *sizeof(elem.c));
-                int type_int = static_cast<int>(elem.type);
-                ofs.write(reinterpret_cast<const char*>(&type_int), sizeof(type_int));
-                ofs.write(reinterpret_cast<const char*>(&elem.domega), sizeof(elem.domega));
-                ofs.write(reinterpret_cast<const char*>(&elem.sigma), sizeof(elem.sigma));
-                ofs.write(reinterpret_cast<const char*>(&elem.vp2_computed), sizeof(elem.vp2_computed));
-                ofs.write(reinterpret_cast<const char*>(&elem.gaussian_computed), sizeof(elem.gaussian_computed));
-                ofs.write(reinterpret_cast<const char*>(&elem.vp2), sizeof(elem.vp2));
-                ofs.write(reinterpret_cast<const char*>(&elem.gaussian), sizeof(elem.gaussian));
-            }
+            boost::archive::text_oarchive oa(ofs, boost::archive::no_header);
+            for (const auto& elem : processes_4ph) oa << elem;
             ofs.flush();
             ofs.close();
         }
@@ -854,9 +829,6 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
             std::vector<Threeph_process> other;
             auto limits = my_jobs(nprocs, nmpi, impi);
 
-            std::cout << "# Working in 3ph - process " <<  impi << ' / ' << nmpi << std::endl;
-            std::cout << std::flush;
-
             if (impi != 0) {
                 other.reserve(limits[1] - limits[0]);
                 comm.send(impi, 0, limits[1] - limits[0]);
@@ -928,61 +900,27 @@ load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
     auto nruter5 = alma::make_unique<std::vector<Fourph_process>>();
 
     std::string filename_4ph(filename);
-    filename_4ph.replace(filename_4ph.find(".h5"), 3, ".4ph");
+    filename_4ph.replace(filename_4ph.find(".h5"), 3, ".4ph.msgpack");
 
     auto FourPhononsFiles = std::filesystem::exists(filename_4ph);
-
-    constexpr std::size_t bytes_4ph = 9 * sizeof(std::size_t) + 
-                                      sizeof(int) + 
-                                      2 * sizeof(bool) + 
-                                      4 * sizeof(double);
     
     if (FourPhononsFiles) {
         std::ifstream ifs(filename_4ph, std::ios::binary);
         if (!ifs) throw std::runtime_error("Failed to open file for reading: " + filename_4ph);
+        boost::archive::text_iarchive ia(ifs, boost::archive::no_header);
 
-        std::size_t n4ph, c;
-        std::array<size_t,4> q, alpha;
-        double sigma, vp2, gaussian, domega;
-        int type_int;
-        bool vp2_computed, gaussian_computed;
-        alma::fourph_type type;
+        std::size_t n4ph = 0;
+        ia >> n4ph;
 
-        /// Read the number of 4ph processes
-        ifs.read(reinterpret_cast<char*>(&n4ph), sizeof(n4ph));
-
-        /// Get what is stored here
         auto limits = alma::my_jobs(n4ph, comm.size(), comm.rank());
         nruter5->reserve(limits[1] - limits[0]);
-        
-        /// Here move the ifs to the limit[0] entry
-        /// each 4 ph object occupies bytes_4ph
-        /// Each MPI rank only reads a section. The 
-        /// file is processed in parallel
-        ifs.seekg(sizeof(std::size_t) + static_cast<std::streamoff>(limits[0]) * bytes_4ph);
 
-        /// Read objects on my section
-        for (std::size_t i = limits[0]; i < limits[1]; i++) {
-            
-            ifs.read(reinterpret_cast<char*>(&c), sizeof(c));
-            ifs.read(reinterpret_cast<char*>(q.data()), 4 * sizeof(c));
-            ifs.read(reinterpret_cast<char*>(alpha.data()), 4 * sizeof(c));
-            ifs.read(reinterpret_cast<char*>(&type_int), sizeof(type_int));
-            ifs.read(reinterpret_cast<char*>(&domega), sizeof(domega));
-            ifs.read(reinterpret_cast<char*>(&sigma), sizeof(sigma));
-            ifs.read(reinterpret_cast<char*>(&vp2_computed), sizeof(vp2_computed));
-            ifs.read(reinterpret_cast<char*>(&gaussian_computed), sizeof(gaussian_computed));
-            ifs.read(reinterpret_cast<char*>(&vp2), sizeof(vp2));
-            ifs.read(reinterpret_cast<char*>(&gaussian), sizeof(gaussian));
-            
-            type = static_cast<alma::fourph_type>(type_int);
+        Fourph_process skip(0, {0,0,0,0}, {0,0,0,0}, alma::fourph_type::recombination, 0., 0.);
+        for (std::size_t i = 0; i < limits[0]; ++i) ia >> skip;
 
-            Fourph_process p(c, q, alpha, type, domega, sigma);
-            p.vp2_computed      = vp2_computed;
-            p.gaussian_computed = gaussian_computed;
-            p.gaussian          = gaussian;
-            p.vp2               = vp2;
-
+        for (std::size_t i = limits[0]; i < limits[1]; ++i) {
+            Fourph_process p(0, {0,0,0,0}, {0,0,0,0}, alma::fourph_type::recombination, 0., 0.);
+            ia >> p;
             nruter5->emplace_back(p);
         }
 
@@ -1500,43 +1438,3 @@ void load_ifcs_subgroup(const char* filename,
 }
 
 } // namespace alma
-
-/// TODO(mrm) Change to MSGPACK
-// msgpack::unpacker pac;
-// auto read_more = [&](std::size_t want) {
-//     // Ensure unpacker has room, read from file into its internal buffer
-//     pac.reserve_buffer(want);
-//     ifs.read(pac.buffer(), want);
-//     std::streamsize got = ifs.gcount();
-//     if (got <= 0) return std::size_t(0);
-//     pac.buffer_consumed(static_cast<std::size_t>(got));
-//     return static_cast<std::size_t>(got);
-// };
-// constexpr std::size_t chunk_size = 5 << 20; // 5 MB at a time, it is more than enough to hold several 4ph objects
-// /// Read the size
-// msgpack::object_handle oh;
-// while (!pac.next(oh)) {
-//     if (read_more(chunk_size) == 0)
-//         throw std::runtime_error("Unexpected EOF reading from " + filename_4ph);
-// }
-// std::size_t n4ph = oh.get().as<std::uint64_t>();
-// auto limits = alma::my_jobs(n4ph, comm.size(), comm.rank());
-// nruter5->reserve(limits[1] - limits[0]);
-// // Skip records before limits[0] 
-// for (std::size_t i = 0; i < limits[0]; ++i) {
-//     while (!pac.next(oh)) {
-//         if (read_more(chunk_size) == 0)
-//             throw std::runtime_error("Unexpected EOF while skipping entries in " + filename_4ph);
-//     }
-// }
-// // Read this rank's chunk [limits[0], limits[1]) ---
-// for (std::size_t i = limits[0]; i < limits[1]; ++i) {
-//     while (!pac.next(oh)) {
-//         if (read_more(chunk_size) == 0)
-//             throw std::runtime_error("Unexpected EOF while reading rank's (" + 
-//                 std::to_string(comm.rank()) + ") entries in " + filename_4ph);
-//     }
-//     Fourph_process p(0, {0,0,0,0},{0,0,0,0}, alma::fourph_type::recombination, 0., 0.);
-//     oh.get().convert(p);
-//     nruter5->emplace_back(p);
-// }
