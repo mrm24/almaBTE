@@ -413,6 +413,8 @@ void save_bulk_hdf5(const char* filename,
             comm.recv(ip, 0, other);
             auto other_nproc = other.size();
 
+            std::cout << "# Working in 3ph - slice " <<  ip << ' / ' << comm.size() << std::endl;
+
             for (hsize_t i = 0; i < other_nproc; ++i) {
                 ++q_pos[0];
                 c_dspace.selectElements(H5S_SELECT_SET, 1, &(q_pos[0]));
@@ -455,6 +457,9 @@ void save_bulk_hdf5(const char* filename,
                 vp2_dset.write(
                     &(other[i].vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
             }
+
+            h5f.flush(H5F_SCOPE_LOCAL);
+
         }
     }
     else {

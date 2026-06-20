@@ -33,7 +33,9 @@ std::vector<Threeph_process> find_allowed_threeph(
                                static_cast<int>(threeph_type::absorption)}});
     auto nprocs = communicator.size();
     auto my_id = communicator.rank();
-    auto limits = my_jobs(grid.get_nequivalences(), nprocs, my_id);
+
+    std::size_t njobs  = grid.get_nequivalences() * grid.nqpoints;
+    auto limits = my_jobs(njobs, nprocs, my_id);
 
     std::size_t nmodes = grid.get_spectrum_at_q(0).omega.size();
 
@@ -45,63 +47,63 @@ std::vector<Threeph_process> find_allowed_threeph(
     // the conservation of energy.
     std::vector<Threeph_process> nruter;
 
-    for (auto ic = limits[0]; ic < limits[1]; ++ic) {
+    for (decltype(njobs) ijob = limits[0]; ijob < limits[1]; ++ijob) {
+        decltype(njobs) ic   = ijob / grid.nqpoints;
+        decltype(njobs) iq2  = ijob % grid.nqpoints;
         auto iq1 = grid.get_representative(ic);
         auto coords1 = grid.one_to_three(iq1);
         auto spectrum1 = grid.get_spectrum_at_q(iq1);
+        auto coords2 = grid.one_to_three(iq2);
+        auto spectrum2 = grid.get_spectrum_at_q(iq2);
+        decltype(coords2) coords3;
 
-        for (std::size_t iq2 = 0; iq2 < grid.nqpoints; ++iq2) {
-            auto coords2 = grid.one_to_three(iq2);
-            auto spectrum2 = grid.get_spectrum_at_q(iq2);
-            decltype(coords2) coords3;
+        // Emission and absorption processes satisfy different
+        // conservation rules, with the second phonon in
+        // different sides of the equations.
+        for (auto s : signs) {
+            for (auto i = 0; i < 3; ++i)
+                coords3[i] = coords1[i] + s * coords2[i];
+            auto iq3 = grid.three_to_one(coords3);
+            auto spectrum3 = grid.get_spectrum_at_q(iq3);
 
-            // Emission and absorption processes satisfy different
-            // conservation rules, with the second phonon in
-            // different sides of the equations.
-            for (auto s : signs) {
-                for (auto i = 0; i < 3; ++i)
-                    coords3[i] = coords1[i] + s * coords2[i];
-                auto iq3 = grid.three_to_one(coords3);
-                auto spectrum3 = grid.get_spectrum_at_q(iq3);
+            for (decltype(nmodes) im1 = 0; im1 < nmodes; ++im1) {
+                // Modes with omega exactly equal to zero
+                // are not taken into account. Hence, it is
+                // important to call enforce_asr() on the grid
+                // object before looking for three-phonon
+                // processes.
+                if (spectrum1.omega(im1) == 0.)
+                    continue;
 
-                for (decltype(nmodes) im1 = 0; im1 < nmodes; ++im1) {
-                    // Modes with omega exactly equal to zero
-                    // are not taken into account. Hence, it is
-                    // important to call enforce_asr() on the grid
-                    // object before looking for three-phonon
-                    // processes.
-                    if (spectrum1.omega(im1) == 0.)
+                for (decltype(nmodes) im2 = 0; im2 < nmodes; ++im2) {
+                    if (spectrum2.omega(im2) == 0.)
                         continue;
 
-                    for (decltype(nmodes) im2 = 0; im2 < nmodes; ++im2) {
-                        if (spectrum2.omega(im2) == 0.)
+                    for (decltype(nmodes) im3 = 0; im3 < nmodes; ++im3) {
+                        if (spectrum3.omega(im3) == 0.)
                             continue;
+                        auto v =
+                            spectrum2.vg.col(im2) - spectrum3.vg.col(im3);
+                        auto sigma = scalebroad * grid.base_sigma(v);
+                        auto delta = std::fabs(spectrum1.omega(im1) +
+                                               s * spectrum2.omega(im2) -
+                                               spectrum3.omega(im3));
 
-                        for (decltype(nmodes) im3 = 0; im3 < nmodes; ++im3) {
-                            if (spectrum3.omega(im3) == 0.)
-                                continue;
-                            auto v =
-                                spectrum2.vg.col(im2) - spectrum3.vg.col(im3);
-                            auto sigma = scalebroad * grid.base_sigma(v);
-                            auto delta = std::fabs(spectrum1.omega(im1) +
-                                                   s * spectrum2.omega(im2) -
-                                                   spectrum3.omega(im3));
-
-                            if (delta <= constants::nsigma * sigma)
-                                nruter.emplace_back(Threeph_process(
-                                    ic,
-                                    std::array<std::size_t, 3>(
-                                        {{iq1, iq2, iq3}}),
-                                    std::array<std::size_t, 3>(
-                                        {{im1, im2, im3}}),
-                                    static_cast<threeph_type>(s),
-                                    delta,
-                                    sigma));
-                        }
+                        if (delta <= constants::nsigma * sigma)
+                            nruter.emplace_back(Threeph_process(
+                                ic,
+                                std::array<std::size_t, 3>(
+                                    {{iq1, iq2, iq3}}),
+                                std::array<std::size_t, 3>(
+                                    {{im1, im2, im3}}),
+                                static_cast<threeph_type>(s),
+                                delta,
+                                sigma));
                     }
                 }
             }
         }
+        
     }
     return nruter;
 }
@@ -360,13 +362,13 @@ std::vector<Fourph_process> find_allowed_fourph(
     std::vector<Fourph_process> nruter;
     const double inv_sqrt_twopi = 1.0 / std::sqrt(2.0 * alma::constants::pi);
 
-    for (auto ijob = limits[0]; ijob < limits[1]; ++ijob) {
-        auto ic  = ijob / grid.nqpoints;
+    for (decltype(njobs) ijob = limits[0]; ijob < limits[1]; ++ijob) {
+        decltype(njobs) ic  = ijob / grid.nqpoints;
         auto iq1 = grid.get_representative(ic);
         auto coords1 = grid.one_to_three(iq1);
         auto spectrum1 = grid.get_spectrum_at_q(iq1);
 
-        auto iq2 = ijob % grid.nqpoints;
+        decltype(njobs) iq2 = ijob % grid.nqpoints;
         auto coords2 = grid.one_to_three(iq2);
         auto spectrum2 = grid.get_spectrum_at_q(iq2);
 
