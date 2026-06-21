@@ -56,30 +56,6 @@ constexpr std::array<int,2> fourph_type_signs(fourph_type t) {
     return {0,0}; 
 }
 
-const constexpr int fourph_to_int(fourph_type t) {
-    switch (t) {
-        case fourph_type::recombination:   return 0;
-        case fourph_type::redistribution:  return 1;
-        case fourph_type::splitting:       return 2;
-    }
-
-    throw std::runtime_error("Error(fourph_to_int): should not be here");
-
-    return -1; 
-}
-
-const constexpr fourph_type int_to_fourph(int t) {
-    switch (t) {
-        case 0:   return fourph_type::recombination;
-        case 1:   return fourph_type::redistribution;
-        case 2:   return fourph_type::splitting;
-    }
-
-    throw std::runtime_error("Error(int_to_fourph): should not be here");
-
-    return fourph_type::splitting; 
-}
-
 /// Representation of a N-phonon process.
 template<std::size_t N, class process_type>
 class ph_process {
@@ -227,6 +203,11 @@ public:
         return this->vp2;
     }
 
+    /// Sets vp2
+    inline void set_vp2(const double vp2_) {
+        this->vp2_computed = true;
+        this->vp2 = vp2_;
+    }
 
     /// @return the value of vp2_computed.
     inline bool is_vp2_computed() const {
@@ -260,6 +241,27 @@ public:
     /// @return an array with the three coefficients
     Eigen::ArrayXd compute_collision(const Gamma_grid& grid,
                                      const Eigen::ArrayXXd& n0){};
+
+
+    /// Equal operator
+    bool operator==(const ph_process& other) const {
+        return (this->c == other.c) &&
+               (this->q == other.q) &&
+               (this->alpha == other.alpha) &&
+               (this->type == other.type) &&
+               (this->domega == other.domega) &&
+               (this->sigma == other.sigma) &&
+               (this->gaussian_computed == other.gaussian_computed) &&
+               (this->gaussian == other.gaussian) &&
+               (this->vp2_computed == other.vp2_computed) &&
+               (this->vp2 == other.vp2);
+    }
+
+
+    /// Not-equal operator, defined in terms of operator==.
+    bool operator!=(const ph_process& other) const {
+        return !(*this == other);
+    }
 };
 
 /// Look for allowed three-phonon processes in a regular grid.

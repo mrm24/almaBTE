@@ -179,6 +179,11 @@ ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
 libsymspg ${HDF5_LIBS} Threads::Threads)
 add_dependencies(transient_analytic1d_test transient_analytic1d)
 
+add_executable(msgpack_test msgpack_test.cpp)
+target_link_libraries(msgpack_test alma_framework
+${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
+libsymspg ${HDF5_LIBS} Threads::Threads)
+
 # Define all tests.
 add_test(NAME metatest COMMAND metatest)
 add_test(NAME poscar_test COMMAND poscar_test)
@@ -203,6 +208,7 @@ add_test(NAME hdf5_scattering_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 2 
 add_test(NAME hdf5_read_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 2 $<TARGET_FILE:hdf5_read_test>)
 add_test(NAME isotopic_scattering_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 2 $<TARGET_FILE:isotopic_scattering_test>)
 add_test(NAME green1d_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 2 $<TARGET_FILE:green1d_test>)
+add_test(NAME msgpack_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 2 $<TARGET_FILE:msgpack_test>)
 add_test(NAME analytic1D_basicprop_test COMMAND analytic1D_basicprop_test)
 add_test(NAME analytic1D_psi_test COMMAND analytic1D_psi_test)
 add_test(NAME analytic1D_SPR-FL_test COMMAND analytic1D_SPR-FL_test)
