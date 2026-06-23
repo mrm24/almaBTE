@@ -398,6 +398,17 @@ std::vector<Fourph_process> find_allowed_fourph(
                             for (decltype(nmodes) im4 = 0; im4 < nmodes; ++im4) {
                                 if (spectrum4.omega(im4) == 0.) continue;
 
+                                // For redistribution none of the incoming pairs
+                                // should be the same that one of the outgoing pairs
+                                if (kind == fourph_type::redistribution ) {
+                                    bool one_same_three = (iq1 == iq3) && (im1 == im3);
+                                    bool one_same_four  = (iq1 == iq4) && (im1 == im4);
+                                    bool two_same_three = (iq2 == iq3) && (im2 == im3);
+                                    bool two_same_four  = (iq2 == iq4) && (im2 == im4);
+                                    if (one_same_three || one_same_four ||
+                                        two_same_three || two_same_four) continue;
+                                }
+
                                 auto v =
                                     spectrum3.vg.col(im3) - spectrum4.vg.col(im4);
                                 auto sigma = scalebroad * grid.base_sigma(v);
@@ -408,7 +419,7 @@ std::vector<Fourph_process> find_allowed_fourph(
 
                                 if (delta <= constants::nsigma * sigma) {
                                     /// For cases in which sigma is 0 and energy is conserved
-                                    if (alma::almost_equal(sigma, 0.)) sigma = inv_sqrt_twopi;
+                                    if (alma::almost_equal(sigma,0.0)) sigma = inv_sqrt_twopi;
                                     nruter.emplace_back(Fourph_process(
                                         ic,
                                         std::array<std::size_t, 4>(
@@ -443,13 +454,20 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_weighted_gaussi
     auto fBE3 = bose_einstein(sp3.omega[this->alpha[2]], T);
     auto fBE4 = bose_einstein(sp4.omega[this->alpha[3]], T);
 
-    int m2 = (1 - s[0]) / 2;
-    int m3 = (1 - s[1]) / 2;
-    double factor = (this->type == fourph_type::splitting) ? 6.0 : 2.0; 
+    double population_factor;
 
-    return ( (fBE2 + m2) * (fBE3 + m3) * fBE4 ) * g / sp1.omega[this->alpha[0]] /
-           sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]] /
-           factor;
+    if (this->type == fourph_type::recombination) {
+        population_factor = fBE2*fBE3 - fBE2*fBE4 - fBE3*fBE4 - fBE4;
+    }
+    else if (this->type  == fourph_type::redistribution) {
+	    population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2 - fBE3*fBE4;
+    }
+    else {
+	    population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2  + fBE3*fBE4 + fBE3 + fBE4 + 1.0;
+    }
+
+    return population_factor * g / sp1.omega[this->alpha[0]] /
+           sp2.omega[this->alpha[1]] / sp3.omega[this->alpha[2]] / sp4.omega[this->alpha[3]];
 }
 
 
@@ -501,9 +519,10 @@ template<> template<> double alma::ph_process<4, alma::fourph_type>::compute_vp2
             for (auto ss = 0; ss < 3; ++ss)
                 for (auto tt = 0; tt < 3; ++tt)
                     for (auto ll = 0; ll < 3; ++ll) 
-                        contr += wf1(tt + 3 * four.i) * wf2(ss + 3 * four.j) *
-                                 wf3(rr + 3 * four.k) * wf4(ll + 3 * four.l) *
-                                 four.ifc(tt, ss, rr, ll);
+                        contr += wf1(ll + 3 * four.i) * wf2(tt + 3 * four.j) *
+                                 wf3(ss + 3 * four.k) * wf4(rr + 3 * four.l) *
+                                 four.ifc(ll, tt, ss, rr);
+
         vp += prefactor * contr;
     }
     // And store only its modulus squared.
@@ -533,10 +552,10 @@ template<>double alma::ph_process<4, alma::fourph_type>::compute_gamma(const Gam
         population_factor = fBE2*fBE3 - fBE2*fBE4 - fBE3*fBE4 - fBE4;
     }
     else if (this->type  == fourph_type::redistribution) {
-	    population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2 - fBE3*fBE4;
+        population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2 - fBE3*fBE4;
     }
-    else {	
-	    population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2  + fBE3*fBE4 + fBE3 + fBE4 + 1.0;
+    else {
+        population_factor = fBE2*fBE3 + fBE2*fBE4 + fBE2  + fBE3*fBE4 + fBE3 + fBE4 + 1.0;
     }
 
     return prefactor * population_factor * g * vp2 / grid.nqpoints / grid.nqpoints / sp1.omega[this->alpha[0]] /
