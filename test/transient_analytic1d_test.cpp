@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +30,8 @@
 #include <utilities.hpp>
 #include <where_is_transient_analytic1d.hpp>
 
-// Randomly-named directory to store the output of the program.
+// Historical reference values have six significant digits; CSV retains full
+// precision. Randomly-named directory to store the output of the program.
 std::string targetdir;
 
 class G_Environment : public ::testing::Environment {
@@ -111,7 +113,7 @@ TEST(spacecurve1_case, transient_analytic1d_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data.col(ncol) - data_ref.col(ncol)).norm() /
                          data_ref.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -139,7 +141,7 @@ TEST(spacecurve2_case, transient_analytic1d_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data.col(ncol) - data_ref.col(ncol)).norm() /
                          data_ref.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -168,7 +170,7 @@ TEST(spacecurve3_case, transient_analytic1d_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data.col(ncol) - data_ref.col(ncol)).norm() /
                          data_ref.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -197,7 +199,7 @@ TEST(spacecurve4_case, transient_analytic1d_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data.col(ncol) - data_ref.col(ncol)).norm() /
                          data_ref.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -218,7 +220,7 @@ TEST(sourcetransient_case, transient_analytic1d_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data.col(ncol) - data_ref.col(ncol)).norm() /
                          data_ref.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -239,7 +241,7 @@ TEST(MSD_case, transient_analytic1d_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data.col(ncol) - data_ref.col(ncol)).norm() /
                          data_ref.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 

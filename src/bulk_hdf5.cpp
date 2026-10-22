@@ -1,853 +1,1113 @@
-// Copyright 2015-2018 The ALMA Project Developers
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//   http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-// implied. See the License for the specific language governing
-// permissions and limitations under the License.
-
-/// @file
-/// Definitions corresponding to bulk_hdf5.hpp.
-
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
+// SPDX-License-Identifier: Apache-2.0
 #include <bitset>
 #include <cstdint>
+#include <numeric>
 #include <H5Cpp.h>
 #include <bulk_hdf5.hpp>
-
-// There seems to be no way to avoid this "using" without
-// causing a lot of compilation problems.
 #ifndef H5_NO_NAMESPACE
 using namespace H5;
-#endif // ifndef H5_NO_NAMESPACE
-
-/// Constants used to build the "/threeph_processes/type"
-/// dataset. See below for details.
-constexpr std::size_t ABSORPTION_BIT = 0;
-constexpr std::size_t GAUSSIAN_BIT = 1;
-constexpr std::size_t VP2_BIT = 2;
+#endif
 
 namespace alma {
-/// Add a string-valued attribute to an HDF5 file, group,
-/// or dataset
-///
-/// Note that UTF-8 encoding is assumed.
-/// @param[in, out] loc - HDF5 group, or dataset
-/// @param[in] name - attribute identifier
-/// @param[in] value - attribute value
-void write_string_attribute(H5Object& obj,
+namespace {
+constexpr std::size_t io_batch = 65536;
+// Every rank participates, including ranks with no rows. Failures are reported
+// before the next point-to-point transfer, so a bad file cannot strand a peer.
+template <class F>
+void root_action(const boost::mpi::communicator& comm, F action) {
+    std::string error;
+    if (comm.rank() == 0) {
+        try {
+            action();
+        }
+        catch (const H5::Exception& e) {
+            error = e.getDetailMsg();
+        }
+        catch (const std::exception& e) {
+            error = e.what();
+        }
+    }
+    boost::mpi::broadcast(comm, error, 0);
+    if (!error.empty())
+        throw input_error("bulk HDF5: " + error);
+}
+std::size_t checked_size(const std::vector<hsize_t>& dims) {
+    std::size_t n = 1;
+    for (auto d : dims) {
+        if (d && n > std::numeric_limits<std::size_t>::max() / d)
+            throw input_error("dataset dimensions overflow size_t");
+        n *= d;
+    }
+    return n;
+}
+std::vector<hsize_t> dimensions(const DataSet& dataset) {
+    const auto space = dataset.getSpace();
+    std::vector<hsize_t> dims(space.getSimpleExtentNdims());
+    if (!dims.empty())
+        space.getSimpleExtentDims(dims.data());
+    return dims;
+}
+void require_dimensions(H5File& file,
+                        const std::string& name,
+                        const std::vector<hsize_t>& dims) {
+    if (dimensions(file.openDataSet(name)) != dims)
+        throw input_error("invalid dimensions for " + name);
+    checked_size(dims);
+}
+void require_unsigned(H5File& file,
+                      const std::string& name,
+                      bool index = false) {
+    const auto type = file.openDataSet(name).getDataType();
+    const auto bytes = type.getSize();
+    if (type.getClass() != H5T_INTEGER ||
+        H5Tget_sign(type.getId()) != H5T_SGN_NONE ||
+        (index && bytes != 4 && bytes != 8))
+        throw input_error("expected unsigned integer dataset: " + name);
+}
+void transfer_slice(DataSet& dataset,
+                    bool write,
+                    const DataType& type,
+                    void* data,
+                    const std::vector<hsize_t>& start,
+                    const std::vector<hsize_t>& count) {
+    if (!checked_size(count))
+        return;
+    auto space = dataset.getSpace();
+    space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
+    DataSpace memory(count.size(), count.data());
+    if (write)
+        dataset.write(data, type, memory, space);
+    else
+        dataset.read(data, type, memory, space);
+}
+template <class T>
+std::vector<T> read_column(H5File& file,
+                           const std::string& name,
+                           std::uint64_t first,
+                           std::size_t n,
+                           const DataType& type) {
+    std::vector<T> result(n);
+    auto dataset = file.openDataSet(name);
+    for (std::size_t i = 0; i < n; i += io_batch) {
+        const auto count = std::min(io_batch, n - i);
+        transfer_slice(
+            dataset, false, type, result.data() + i, {first + i}, {count});
+    }
+    return result;
+}
+template <class T>
+void write_column(H5File& file,
+                  const std::string& name,
+                  std::uint64_t first,
+                  const std::vector<T>& values,
+                  const DataType& type) {
+    auto dataset = file.openDataSet(name);
+    for (std::size_t i = 0; i < values.size(); i += io_batch) {
+        const auto count = std::min(io_batch, values.size() - i);
+        transfer_slice(dataset,
+                       true,
+                       type,
+                       const_cast<T*>(values.data() + i),
+                       {first + i},
+                       {count});
+    }
+}
+void create_column(H5File& file,
+                   const std::string& name,
+                   std::uint64_t n,
+                   const DataType& type) {
+    const hsize_t length = n;
+    file.createDataSet(name, type, DataSpace(1, &length));
+}
+std::string sign_path(int which) {
+    return which ? "/threeph_processes/absorption/"
+                 : "/threeph_processes/emission/";
+}
+threeph_type sign_value(int which) {
+    return which ? threeph_type::absorption : threeph_type::emission;
+}
+} // namespace
+
+void write_string_attribute(H5Object& object,
                             const std::string& name,
                             const std::string& value) {
-    DataSpace attr_space = DataSpace();
-    StrType attr_type(PredType::C_S1, value.size());
-
-    attr_type.setCset(H5T_CSET_UTF8);
-    Attribute attr(obj.createAttribute(name, attr_type, attr_space));
-    attr.write(attr_type, value.data());
+    StrType type(PredType::C_S1, std::max<std::size_t>(1, value.size()));
+    type.setCset(H5T_CSET_UTF8);
+    auto attribute = object.createAttribute(name, type, DataSpace());
+    attribute.write(type, value);
 }
-
-
-/// Create a dataset from an Eigen object.
-///
-/// All objects are assumed to be 2D, and their contents
-/// are assumed to be double-precission floating point numbers.
-/// @param[in,out] loc - the HDF5 file or group
-/// @param[in] data - the Eigen object
-/// @param[in] name - the name of the dataset
-/// @param[in] units - the units of the data
-template <typename H, typename T>
+template <class H, class T>
 void create_eigen_dataset(H& loc,
                           const Eigen::DenseBase<T>& data,
                           const std::string& name,
                           const std::string& units) {
-    hsize_t rows = static_cast<hsize_t>(data.rows());
-    hsize_t cols = static_cast<hsize_t>(data.cols());
-    hsize_t dims[] = {rows, cols};
-    DataSpace dspace(2, dims);
-    DataSpace scalar;
-    DataSet dset = loc.createDataSet(name, PredType::IEEE_F64LE, dspace);
-    hsize_t pos[] = {1, 1};
+    const hsize_t dims[] = {static_cast<hsize_t>(data.rows()),
+                            static_cast<hsize_t>(data.cols())};
+    auto dataset =
+        loc.createDataSet(name, PredType::IEEE_F64LE, DataSpace(2, dims));
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
+        contiguous = data;
+    dataset.write(contiguous.data(), PredType::NATIVE_DOUBLE);
+    write_string_attribute(dataset, "Units", units);
+}
+void write_file_attributes(H5File& file, const std::string& description) {
+    auto root = file.openGroup("/");
+    write_string_attribute(root, "timestamp", get_timestamp());
+    write_string_attribute(root, "description", description);
+    unsigned version = BULK_HDF5_MAJOR_VERSION;
+    auto attribute =
+        file.createAttribute("major_version", PredType::STD_U16LE, DataSpace());
+    attribute.write(PredType::NATIVE_UINT, &version);
+    version = BULK_HDF5_MINOR_VERSION;
+    attribute =
+        file.createAttribute("minor_version", PredType::STD_U16LE, DataSpace());
+    attribute.write(PredType::NATIVE_UINT, &version);
+}
+void create_groups(H5File& file) {
+    for (const auto name : {"/crystal_structure",
+                            "/symmetry_operations",
+                            "/qpoint_grid",
+                            "/threeph_processes",
+                            "/scattering"})
+        file.createGroup(name);
+}
+std::string read_file_attributes(H5File& file) {
+    unsigned major, minor;
+    file.openAttribute("major_version").read(PredType::NATIVE_UINT, &major);
+    file.openAttribute("minor_version").read(PredType::NATIVE_UINT, &minor);
+    if (major != 0 || (minor != 1 && minor != 2 && minor != 4 && minor != 5))
+        throw input_error("unsupported bulk HDF5 version " +
+                          std::to_string(major) + "." + std::to_string(minor));
+    auto attribute = file.openAttribute("description");
+    std::string result;
+    attribute.read(attribute.getStrType(), result);
+    return result;
+}
 
-    // Write the elements one by one to avoid storage order issues.
-    for (decltype(rows) i = 0; i < rows; ++i) {
-        pos[0] = i;
-
-        for (decltype(cols) j = 0; j < cols; ++j) {
-            pos[1] = j;
-            dspace.selectElements(H5S_SELECT_SET, 1, pos);
-            double value = data(i, j);
-            dset.write(&value, PredType::NATIVE_DOUBLE, scalar, dspace);
+namespace {
+void write_metadata(H5File& file,
+                    const std::string& description,
+                    const Crystal_structure& cell,
+                    const Symmetry_operations& symmetries,
+                    const Gamma_grid& grid) {
+    write_file_attributes(file, description);
+    create_groups(file);
+    create_eigen_dataset(
+        file, cell.lattvec, "/crystal_structure/lattvec", "nm");
+    create_eigen_dataset(file,
+                         cell.positions,
+                         "/crystal_structure/positions",
+                         "lattice coordinates");
+    std::size_t longest = 1;
+    for (const auto& element : cell.elements)
+        longest = std::max(longest, element.size());
+    StrType type(PredType::C_S1, longest);
+    type.setCset(H5T_CSET_UTF8);
+    create_column(
+        file, "/crystal_structure/elements", cell.elements.size(), type);
+    auto elements = file.openDataSet("/crystal_structure/elements");
+    for (std::size_t i = 0; i < cell.elements.size(); ++i) {
+        auto space = elements.getSpace();
+        const hsize_t pos = i;
+        space.selectElements(H5S_SELECT_SET, 1, &pos);
+        elements.write(cell.elements[i], type, DataSpace(), space);
+    }
+    create_column(file,
+                  "/crystal_structure/numbers",
+                  cell.numbers.size(),
+                  PredType::STD_I32LE);
+    write_column(file,
+                 "/crystal_structure/numbers",
+                 0,
+                 cell.numbers,
+                 PredType::NATIVE_INT);
+    auto symprec = file.createDataSet(
+        "/symmetry_operations/symprec", PredType::IEEE_F64LE, DataSpace());
+    symprec.write(&symmetries.symprec, PredType::NATIVE_DOUBLE);
+    create_column(file, "/qpoint_grid/nq", 3, PredType::STD_I32LE);
+    write_column(file,
+                 "/qpoint_grid/nq",
+                 0,
+                 std::vector<int>{grid.na, grid.nb, grid.nc},
+                 PredType::NATIVE_INT);
+    const hsize_t bands = grid.get_spectrum_at_q(0).omega.size();
+    const hsize_t wdims[] = {grid.nqpoints, bands},
+                  fdims[] = {grid.nqpoints, bands, bands};
+    const hsize_t vdims[] = {grid.nqpoints, 3, bands};
+    auto omega = file.createDataSet(
+        "/qpoint_grid/omega", PredType::IEEE_F64LE, DataSpace(2, wdims));
+    auto real = file.createDataSet(
+        "/qpoint_grid/re_wf", PredType::IEEE_F64LE, DataSpace(3, fdims));
+    auto imag = file.createDataSet(
+        "/qpoint_grid/im_wf", PredType::IEEE_F64LE, DataSpace(3, fdims));
+    auto velocity = file.createDataSet(
+        "/qpoint_grid/vg", PredType::IEEE_F64LE, DataSpace(3, vdims));
+    write_string_attribute(omega, "Units", "rad / ps");
+    write_string_attribute(velocity, "Units", "nm / ps");
+    const bool has_wigner = grid.get_spectrum_at_q(0).has_wigner_velocities();
+    for (std::size_t q = 0; q < grid.nqpoints; ++q) {
+        const auto& sp = grid.get_spectrum_at_q(q);
+        if (sp.has_wigner_velocities() != has_wigner ||
+            (has_wigner &&
+             (sp.wigner_v.rows() != 3 ||
+              sp.wigner_v.cols() != static_cast<Eigen::Index>(bands * bands) ||
+              !sp.wigner_v.isFinite().all())))
+            throw input_error("inconsistent or nonfinite Wigner velocity data");
+    }
+    auto qgroup = file.openGroup("/qpoint_grid");
+    auto available = qgroup.createAttribute(
+        "wigner_available", PredType::STD_U8LE, DataSpace());
+    const unsigned char present = has_wigner ? 1 : 0;
+    available.write(PredType::NATIVE_UCHAR, &present);
+    DataSet wigner_real, wigner_imag;
+    if (has_wigner) {
+        const hsize_t dims[] = {grid.nqpoints, 3, bands, bands};
+        wigner_real = file.createDataSet("/qpoint_grid/re_wigner_v",
+                                         PredType::IEEE_F64LE,
+                                         DataSpace(4, dims));
+        wigner_imag = file.createDataSet("/qpoint_grid/im_wigner_v",
+                                         PredType::IEEE_F64LE,
+                                         DataSpace(4, dims));
+        for (auto* dataset : {&wigner_real, &wigner_imag}) {
+            write_string_attribute(*dataset, "Units", "nm / ps");
+            write_string_attribute(
+                *dataset, "axes", "qpoint,cartesian,bra_band,ket_band");
+            write_string_attribute(*dataset,
+                                   "phase_convention",
+                                   "smooth; atomic positions included");
         }
     }
-    write_string_attribute(dset, "Units", units);
+    for (hsize_t q = 0; q < grid.nqpoints; ++q) {
+        const auto& spectrum = grid.get_spectrum_at_q(q);
+        transfer_slice(omega,
+                       true,
+                       PredType::NATIVE_DOUBLE,
+                       const_cast<double*>(spectrum.omega.data()),
+                       {q, 0},
+                       {1, bands});
+        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
+            buffer = spectrum.wfs.real();
+        transfer_slice(real,
+                       true,
+                       PredType::NATIVE_DOUBLE,
+                       buffer.data(),
+                       {q, 0, 0},
+                       {1, bands, bands});
+        buffer = spectrum.wfs.imag();
+        transfer_slice(imag,
+                       true,
+                       PredType::NATIVE_DOUBLE,
+                       buffer.data(),
+                       {q, 0, 0},
+                       {1, bands, bands});
+        buffer = spectrum.vg;
+        transfer_slice(velocity,
+                       true,
+                       PredType::NATIVE_DOUBLE,
+                       buffer.data(),
+                       {q, 0, 0},
+                       {1, 3, bands});
+        if (has_wigner) {
+            // Band-pair order is explicit on disk; Eigen's flattened in-memory
+            // convention is bra + bands * ket.
+            std::vector<double> re(3 * bands * bands), im(re.size());
+            for (hsize_t axis = 0; axis < 3; ++axis)
+                for (hsize_t i = 0; i < bands; ++i)
+                    for (hsize_t j = 0; j < bands; ++j) {
+                        const auto value =
+                            spectrum.wigner_v(axis, i + bands * j);
+                        const auto offset = (axis * bands + i) * bands + j;
+                        re[offset] = value.real();
+                        im[offset] = value.imag();
+                    }
+            transfer_slice(wigner_real,
+                           true,
+                           PredType::NATIVE_DOUBLE,
+                           re.data(),
+                           {q, 0, 0, 0},
+                           {1, 3, bands, bands});
+            transfer_slice(wigner_imag,
+                           true,
+                           PredType::NATIVE_DOUBLE,
+                           im.data(),
+                           {q, 0, 0, 0},
+                           {1, 3, bands, bands});
+        }
+    }
+    auto processes = file.openGroup("/threeph_processes");
+    write_string_attribute(
+        processes, "mode_encoding", "q*nbranches+branch; zero-based");
+    write_string_attribute(
+        processes, "row_encoding", "class*nbranches+branch; zero-based");
+    std::vector<std::uint64_t> representatives;
+    for (std::size_t c = 0; c < grid.get_nequivalences(); ++c)
+        representatives.push_back(grid.get_representative(c));
+    create_column(file,
+                  "/threeph_processes/representatives",
+                  representatives.size(),
+                  PredType::STD_U64LE);
+    write_column(file,
+                 "/threeph_processes/representatives",
+                 0,
+                 representatives,
+                 PredType::NATIVE_UINT64);
 }
-
-
-/// Write some metadata to the HDF5 file as attributes.
-///
-/// @param[in,out] file - the HDF5 file
-/// @param[in] description - a free-format description
-void write_file_attributes(H5File& file, const std::string& description) {
-    Group root = file.openGroup("/");
-    // Creation timestamp.
-    write_string_attribute(root, "timestamp", get_timestamp());
-    // File version.
-    unsigned int version = BULK_HDF5_MAJOR_VERSION;
-    DataSpace version_space = DataSpace();
-    Attribute version_attr(file.createAttribute(
-        "major_version", PredType::STD_U16LE, version_space));
-    version_attr.write(PredType::NATIVE_UINT, &version);
-    version = BULK_HDF5_MINOR_VERSION;
-    version_attr = file.createAttribute(
-        "minor_version", PredType::STD_U16LE, version_space);
-    version_attr.write(PredType::NATIVE_UINT, &version);
-    // Free-format description.
-    write_string_attribute(root, "description", description);
+struct Metadata {
+    std::string description;
+    unsigned minor = 0;
+    std::vector<double> lattice, positions;
+    std::vector<std::string> elements;
+    std::vector<int> numbers, nq;
+    double symprec = 0.;
+    std::vector<Spectrum_at_point> spectrum;
+    template <class Archive> void serialize(Archive& ar, unsigned int) {
+        ar & description & minor & lattice & positions & elements & numbers &
+            nq & symprec & spectrum;
+    }
+};
+Metadata read_metadata(H5File& file) {
+    Metadata result;
+    result.description = read_file_attributes(file);
+    file.openAttribute("minor_version")
+        .read(PredType::NATIVE_UINT, &result.minor);
+    require_dimensions(file, "/crystal_structure/lattvec", {3, 3});
+    result.lattice.resize(9);
+    file.openDataSet("/crystal_structure/lattvec")
+        .read(result.lattice.data(), PredType::NATIVE_DOUBLE);
+    const auto positions_dims =
+        dimensions(file.openDataSet("/crystal_structure/positions"));
+    if (positions_dims.size() != 2 || positions_dims[0] != 3 ||
+        positions_dims[1] == 0)
+        throw input_error("invalid crystal positions dimensions");
+    result.positions.resize(checked_size(positions_dims));
+    file.openDataSet("/crystal_structure/positions")
+        .read(result.positions.data(), PredType::NATIVE_DOUBLE);
+    auto elements = file.openDataSet("/crystal_structure/elements");
+    const auto element_dims = dimensions(elements);
+    if (element_dims.size() != 1 || element_dims[0] == 0)
+        throw input_error("invalid element dimensions");
+    for (hsize_t i = 0; i < element_dims[0]; ++i) {
+        std::string element;
+        auto space = elements.getSpace();
+        space.selectElements(H5S_SELECT_SET, 1, &i);
+        elements.read(element, elements.getStrType(), DataSpace(), space);
+        result.elements.push_back(element);
+    }
+    require_dimensions(file, "/crystal_structure/numbers", element_dims);
+    result.numbers = read_column<int>(file,
+                                      "/crystal_structure/numbers",
+                                      0,
+                                      element_dims[0],
+                                      PredType::NATIVE_INT);
+    std::uint64_t atoms = 0;
+    for (auto n : result.numbers) {
+        if (n <= 0)
+            throw input_error("nonpositive atom count");
+        atoms += n;
+    }
+    if (atoms != positions_dims[1])
+        throw input_error("atom counts and positions disagree");
+    require_dimensions(file, "/symmetry_operations/symprec", {});
+    file.openDataSet("/symmetry_operations/symprec")
+        .read(&result.symprec, PredType::NATIVE_DOUBLE);
+    if (!std::isfinite(result.symprec) || result.symprec <= 0.)
+        throw input_error("invalid symmetry tolerance");
+    require_dimensions(file, "/qpoint_grid/nq", {3});
+    result.nq =
+        read_column<int>(file, "/qpoint_grid/nq", 0, 3, PredType::NATIVE_INT);
+    for (auto n : result.nq)
+        if (n <= 0)
+            throw input_error("nonpositive q-grid dimension");
+    const auto nq = checked_size({static_cast<hsize_t>(result.nq[0]),
+                                  static_cast<hsize_t>(result.nq[1]),
+                                  static_cast<hsize_t>(result.nq[2])});
+    if (nq > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        throw input_error(
+            "q-grid exceeds the supported int q-point indexing range");
+    const auto bands = checked_size({3, atoms});
+    require_dimensions(file, "/qpoint_grid/omega", {nq, bands});
+    require_dimensions(file, "/qpoint_grid/re_wf", {nq, bands, bands});
+    require_dimensions(file, "/qpoint_grid/im_wf", {nq, bands, bands});
+    require_dimensions(file, "/qpoint_grid/vg", {nq, 3, bands});
+    auto omega = file.openDataSet("/qpoint_grid/omega"),
+         real = file.openDataSet("/qpoint_grid/re_wf");
+    auto imag = file.openDataSet("/qpoint_grid/im_wf"),
+         velocity = file.openDataSet("/qpoint_grid/vg");
+    const bool has_real =
+        H5Lexists(file.getId(), "/qpoint_grid/re_wigner_v", H5P_DEFAULT) > 0;
+    const bool has_imag =
+        H5Lexists(file.getId(), "/qpoint_grid/im_wigner_v", H5P_DEFAULT) > 0;
+    if (has_real != has_imag)
+        throw input_error("incomplete Wigner real/imaginary dataset pair");
+    auto qgroup = file.openGroup("/qpoint_grid");
+    const bool has_marker = H5Aexists(qgroup.getId(), "wigner_available") > 0;
+    if (result.minor == 5 && !has_marker)
+        throw input_error("missing Wigner availability marker");
+    if (has_marker) {
+        unsigned char present = 0;
+        auto marker = qgroup.openAttribute("wigner_available");
+        if (marker.getSpace().getSimpleExtentType() != H5S_SCALAR ||
+            marker.getTypeClass() != H5T_INTEGER ||
+            marker.getDataType().getSize() != 1 ||
+            H5Tget_sign(marker.getDataType().getId()) != H5T_SGN_NONE)
+            throw input_error("invalid Wigner availability marker type");
+        marker.read(PredType::NATIVE_UCHAR, &present);
+        if (present > 1 || (present != 0) != has_real)
+            throw input_error("inconsistent Wigner availability marker");
+    }
+    DataSet wigner_real, wigner_imag;
+    bool flattened = false;
+    if (has_real) {
+        wigner_real = file.openDataSet("/qpoint_grid/re_wigner_v");
+        wigner_imag = file.openDataSet("/qpoint_grid/im_wigner_v");
+        const auto dims = dimensions(wigner_real);
+        flattened =
+            dims == std::vector<hsize_t>{nq, 3, checked_size({bands, bands})};
+        if (dims != dimensions(wigner_imag) ||
+            (dims != std::vector<hsize_t>{nq, 3, bands, bands} &&
+             !(result.minor < 5 && flattened)))
+            throw input_error("invalid Wigner velocity dimensions");
+        for (const auto* dataset : {&wigner_real, &wigner_imag})
+            if (dataset->getTypeClass() != H5T_FLOAT ||
+                dataset->getDataType().getSize() != 8)
+                throw input_error("Wigner velocities must be float64");
+    }
+    result.spectrum.reserve(nq);
+    for (std::size_t q = 0; q < nq; ++q) {
+        Eigen::ArrayXd frequencies(bands);
+        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
+            re(bands, bands), im(bands, bands), vg(3, bands);
+        transfer_slice(omega,
+                       false,
+                       PredType::NATIVE_DOUBLE,
+                       frequencies.data(),
+                       {q, 0},
+                       {1, bands});
+        transfer_slice(real,
+                       false,
+                       PredType::NATIVE_DOUBLE,
+                       re.data(),
+                       {q, 0, 0},
+                       {1, bands, bands});
+        transfer_slice(imag,
+                       false,
+                       PredType::NATIVE_DOUBLE,
+                       im.data(),
+                       {q, 0, 0},
+                       {1, bands, bands});
+        transfer_slice(velocity,
+                       false,
+                       PredType::NATIVE_DOUBLE,
+                       vg.data(),
+                       {q, 0, 0},
+                       {1, 3, bands});
+        Eigen::MatrixXcd wfs =
+            re.cast<std::complex<double>>() +
+            constants::imud * im.cast<std::complex<double>>();
+        Eigen::ArrayXXcd wigner;
+        if (has_real) {
+            std::vector<double> re(3 * bands * bands), im(re.size());
+            const std::vector<hsize_t> start =
+                flattened ? std::vector<hsize_t>{q, 0, 0}
+                          : std::vector<hsize_t>{q, 0, 0, 0};
+            const std::vector<hsize_t> count =
+                flattened ? std::vector<hsize_t>{1, 3, bands * bands}
+                          : std::vector<hsize_t>{1, 3, bands, bands};
+            transfer_slice(wigner_real,
+                           false,
+                           PredType::NATIVE_DOUBLE,
+                           re.data(),
+                           start,
+                           count);
+            transfer_slice(wigner_imag,
+                           false,
+                           PredType::NATIVE_DOUBLE,
+                           im.data(),
+                           start,
+                           count);
+            wigner.resize(3, bands * bands);
+            for (std::size_t axis = 0; axis < 3; ++axis)
+                for (std::size_t i = 0; i < bands; ++i)
+                    for (std::size_t j = 0; j < bands; ++j) {
+                        const auto offset =
+                            flattened ? axis * bands * bands + i + bands * j
+                                      : (axis * bands + i) * bands + j;
+                        if (!std::isfinite(re[offset]) ||
+                            !std::isfinite(im[offset]))
+                            throw input_error("nonfinite Wigner velocity");
+                        wigner(axis, i + bands * j) = {re[offset], im[offset]};
+                    }
+        }
+        result.spectrum.emplace_back(frequencies, wfs, vg, wigner);
+    }
+    return result;
 }
-
-
-/// Create some predefined groups in the HDF5 file.
-///
-/// @param[in,out] file - the hdf5 file
-void create_groups(H5File& file) {
-    file.createGroup("/crystal_structure");
-    file.createGroup("/symmetry_operations");
-    file.createGroup("/qpoint_grid");
-    file.createGroup("/threeph_processes");
-    file.createGroup("/scattering");
-    file.createGroup("/ifcs");
+struct Partition {
+    std::size_t first = 0, rows = 0;
+    std::array<std::vector<std::uint64_t>, 2> counts;
+    template <class Archive> void serialize(Archive& ar, unsigned int) {
+        ar & first & rows & counts;
+    }
+};
+using Offsets = std::array<std::vector<std::uint64_t>, 2>;
+void validate_offsets(const std::vector<std::uint64_t>& offsets,
+                      std::size_t rows) {
+    if (offsets.size() != rows + 1 || offsets.front() != 0 ||
+        !std::is_sorted(offsets.begin(), offsets.end()) ||
+        offsets.back() > std::numeric_limits<std::size_t>::max())
+        throw input_error("invalid three-phonon offsets");
 }
-
+std::vector<std::size_t> partition_rows(const Offsets& offsets,
+                                        std::size_t rows,
+                                        int ranks) {
+    std::vector<std::uint64_t> work(rows + 1);
+    for (std::size_t r = 0; r <= rows; ++r) {
+        if (offsets[0][r] >
+            std::numeric_limits<std::uint64_t>::max() - offsets[1][r])
+            throw input_error("three-phonon process count overflows uint64");
+        work[r] = offsets[0][r] + offsets[1][r];
+    }
+    std::vector<std::size_t> boundaries(ranks + 1);
+    boundaries.back() = rows;
+    for (int rank = 1; rank < ranks; ++rank) {
+        if (work.back() == 0)
+            boundaries[rank] = my_jobs(rows, ranks, rank)[0];
+        else {
+            const auto target = work.back() / ranks * rank +
+                                (work.back() % ranks) * rank / ranks;
+            boundaries[rank] =
+                std::lower_bound(work.begin(), work.end(), target) -
+                work.begin();
+        }
+    }
+    return boundaries;
+}
+void allocate_table(Threeph_table& table,
+                    const std::vector<std::uint64_t>& global,
+                    std::size_t first,
+                    std::size_t rows) {
+    table.offsets.resize(rows + 1);
+    for (std::size_t r = 0; r <= rows; ++r)
+        table.offsets[r] = global[first + r] - global[first];
+    const auto n = table.offsets.back();
+    table.second.resize(n);
+    table.third.resize(n);
+    table.domega.resize(n);
+    table.sigma.resize(n);
+    table.gaussian.resize(n);
+    table.vp2.resize(n);
+    table.flags.resize(n);
+}
+void write_table(H5File& file,
+                 const Threeph_processes& processes,
+                 const Offsets& global) {
+    for (int which = 0; which < 2; ++which) {
+        const auto path = sign_path(which);
+        const auto& table = processes.table(sign_value(which));
+        const auto first = global[which][processes.first_row()];
+        if (table.second.wide()) {
+            write_column(file,
+                         path + "second",
+                         first,
+                         table.second.wide_values(),
+                         PredType::NATIVE_UINT64);
+            write_column(file,
+                         path + "third",
+                         first,
+                         table.third.wide_values(),
+                         PredType::NATIVE_UINT64);
+        }
+        else {
+            write_column(file,
+                         path + "second",
+                         first,
+                         table.second.narrow(),
+                         PredType::NATIVE_UINT32);
+            write_column(file,
+                         path + "third",
+                         first,
+                         table.third.narrow(),
+                         PredType::NATIVE_UINT32);
+        }
+        write_column(file,
+                     path + "domega",
+                     first,
+                     table.domega,
+                     PredType::NATIVE_DOUBLE);
+        write_column(
+            file, path + "sigma", first, table.sigma, PredType::NATIVE_DOUBLE);
+        write_column(file,
+                     path + "gaussian",
+                     first,
+                     table.gaussian,
+                     PredType::NATIVE_DOUBLE);
+        write_column(
+            file, path + "vp2", first, table.vp2, PredType::NATIVE_DOUBLE);
+        write_column(
+            file, path + "flags", first, table.flags, PredType::NATIVE_UINT8);
+    }
+}
+} // namespace
 
 void save_bulk_hdf5(const char* filename,
                     const std::string& description,
                     const Crystal_structure& cell,
                     const Symmetry_operations& symmetries,
                     const Gamma_grid& grid,
-                    const std::vector<Threeph_process>& processes,
+                    const Threeph_processes& input,
                     const boost::mpi::communicator& comm) {
-    auto my_id = comm.rank();
-    auto my_nprocs = processes.size();
-
-    decltype(my_nprocs) nprocs;
-    boost::mpi::reduce(
-        comm, my_nprocs, nprocs, std::plus<decltype(my_nprocs)>(), 0);
-
-    // Only process 0 will handle the actual output.
-    if (my_id == 0) {
-        // This part of the function is rather long, but also very
-        // repetitive. Each DataSet requires specifying its data space,
-        // data type and so on and so forth.
-        // Create or overwrite the HDF5 file.
-        H5File h5f(filename, H5F_ACC_TRUNC);
-        // Global attributes.
-        write_file_attributes(h5f, description);
-        // Create some groups in the file.
-        create_groups(h5f);
-        // Lattice vectors.
-        create_eigen_dataset(
-            h5f, cell.lattvec, "/crystal_structure/lattvec", "nm");
-        // Atomic positions.
-        create_eigen_dataset(h5f,
-                             cell.positions,
-                             "/crystal_structure/positions",
-                             "lattice coordinates");
-        // Elements.
-        auto nelements = cell.elements.size();
-        hsize_t elements_dims[] = {nelements};
-        DataSpace elements_dspace(1, elements_dims);
-        DataSpace scalar;
-        auto longest_el =
-            std::max_element(cell.elements.begin(),
-                             cell.elements.end(),
-                             [](const std::string& s1, const std::string& s2) {
-                                 return s1.size() < s2.size();
-                             });
-        StrType elements_type(PredType::C_S1, longest_el->size());
-        elements_type.setCset(H5T_CSET_UTF8);
-        DataSet elements_dset = h5f.createDataSet(
-            "/crystal_structure/elements", elements_type, elements_dspace);
-
-        for (hsize_t i = 0; i < nelements; ++i) {
-            elements_dspace.selectElements(H5S_SELECT_SET, 1, &i);
-            elements_dset.write(
-                cell.elements[i], elements_type, scalar, elements_dspace);
-        }
-        // Number of atoms belonging to each element.
-        DataSet numbers_dset = h5f.createDataSet(
-            "/crystal_structure/numbers", PredType::STD_I32LE, elements_dspace);
-        elements_dspace.selectAll();
-        numbers_dset.write(cell.numbers.data(),
-                           PredType::NATIVE_INT,
-                           elements_dspace,
-                           elements_dspace);
-        // Tolerance for symmetry search.
-        DataSet symprec_dset = h5f.createDataSet(
-            "/symmetry_operations/symprec", PredType::IEEE_F64LE, scalar);
-        symprec_dset.write(
-            &(symmetries.symprec), PredType::NATIVE_DOUBLE, scalar, scalar);
-        // Dimensions of the q-point grid.
-        int nq[] = {grid.na, grid.nb, grid.nc};
-        hsize_t nq_dims[] = {3};
-        DataSpace nq_dspace(1, nq_dims);
-        DataSet nq_dset = h5f.createDataSet(
-            "/qpoint_grid/nq", PredType::STD_I32LE, nq_dspace);
-        nq_dspace.selectAll();
-        nq_dset.write(nq, PredType::NATIVE_INT, nq_dspace, nq_dspace);
-        // Harmonic properties at each q point.
-        // Frequencies.
-        hsize_t nmodes =
-            static_cast<hsize_t>(grid.get_spectrum_at_q(0).omega.size());
-        hsize_t omega_dims[] = {grid.nqpoints, nmodes};
-        DataSpace omega_dspace(2, omega_dims);
-        DataSet omega_dset = h5f.createDataSet(
-            "/qpoint_grid/omega", PredType::IEEE_F64LE, omega_dspace);
-        hsize_t omega_dims_m[] = {nmodes};
-        DataSpace omega_dspace_m(1, omega_dims_m);
-        hsize_t omega_start[] = {0, 0};
-        hsize_t omega_count[] = {1, nmodes};
-        omega_dspace_m.selectAll();
-
-        for (hsize_t i = 0; i < grid.nqpoints; ++i) {
-            omega_start[0] = i;
-            omega_dspace.selectHyperslab(
-                H5S_SELECT_SET, omega_count, omega_start);
-            omega_dset.write(grid.get_spectrum_at_q(i).omega.data(),
-                             PredType::NATIVE_DOUBLE,
-                             omega_dspace_m,
-                             omega_dspace);
-        }
-        write_string_attribute(omega_dset, "Units", "rad / ps");
-        // Real and imaginary parts of the wave functions.
-        hsize_t wf_dims[] = {grid.nqpoints, nmodes, nmodes};
-        DataSpace wf_dspace(3, wf_dims);
-        DataSet wf_re_dset = h5f.createDataSet(
-            "/qpoint_grid/re_wf", PredType::IEEE_F64LE, wf_dspace);
-        DataSet wf_im_dset = h5f.createDataSet(
-            "/qpoint_grid/im_wf", PredType::IEEE_F64LE, wf_dspace);
-        hsize_t wf_pos[] = {0, 0, 0};
-
-        for (hsize_t i = 0; i < grid.nqpoints; ++i) {
-            wf_pos[0] = i;
-
-            for (hsize_t j1 = 0; j1 < nmodes; ++j1) {
-                wf_pos[1] = j1;
-
-                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-                    wf_pos[2] = j2;
-                    wf_dspace.selectElements(H5S_SELECT_SET, 1, wf_pos);
-                    auto value = grid.get_spectrum_at_q(i).wfs(j1, j2);
-                    double re = value.real();
-                    double im = value.imag();
-                    wf_re_dset.write(
-                        &re, PredType::NATIVE_DOUBLE, scalar, wf_dspace);
-                    wf_im_dset.write(
-                        &im, PredType::NATIVE_DOUBLE, scalar, wf_dspace);
-                }
-            }
-        }
-        // Cartesian components of the group velocities.
-        hsize_t vg_dims[] = {grid.nqpoints, 3, nmodes};
-        DataSpace vg_dspace(3, vg_dims);
-        DataSet vg_dset = h5f.createDataSet(
-            "/qpoint_grid/vg", PredType::IEEE_F64LE, vg_dspace);
-        hsize_t vg_pos[] = {0, 0, 0};
-
-        for (hsize_t i = 0; i < grid.nqpoints; ++i) {
-            vg_pos[0] = i;
-
-            for (hsize_t j1 = 0; j1 < 3; ++j1) {
-                vg_pos[1] = j1;
-
-                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-                    vg_pos[2] = j2;
-                    vg_dspace.selectElements(H5S_SELECT_SET, 1, vg_pos);
-                    double value = grid.get_spectrum_at_q(i).vg(j1, j2);
-                    vg_dset.write(
-                        &value, PredType::NATIVE_DOUBLE, scalar, vg_dspace);
-                }
-            }
-        }
-        write_string_attribute(vg_dset, "Units", "nm / ps");
-
-        // Cartesian components of the Wigner matrix velocities.
-        hsize_t wigner_v_dims[] = {grid.nqpoints, 3, nmodes*nmodes};
-        DataSpace wigner_v_dspace(3, wigner_v_dims);
-        DataSet re_wigner_v_dset = h5f.createDataSet(
-            "/qpoint_grid/re_wigner_v", PredType::IEEE_F64LE, wigner_v_dspace);
-        DataSet im_wigner_v_dset = h5f.createDataSet(
-            "/qpoint_grid/im_wigner_v", PredType::IEEE_F64LE, wigner_v_dspace);
-        hsize_t wigner_v_pos[] = {0, 0, 0};
-
-        for (hsize_t i = 0; i < grid.nqpoints; ++i) {
-            wigner_v_pos[0] = i;
-
-            for (hsize_t j1 = 0; j1 < 3; ++j1) {
-                wigner_v_pos[1] = j1;
-
-                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-
-                        for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
-
-                            wigner_v_pos[2] = j2+nmodes*j3;
-
-                            wigner_v_dspace.selectElements(H5S_SELECT_SET, 1, wigner_v_pos);
-                            auto value =
-                                grid.get_spectrum_at_q(i).wigner_v(j1, j2+nmodes*j3);
-                            double re = value.real();
-                            double im = value.imag();
-                            re_wigner_v_dset.write(
-                                &re, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
-                            im_wigner_v_dset.write(
-                                &im, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
-
-                    }
-                }
-            }
-        }
-        write_string_attribute(re_wigner_v_dset, "Units", "nm / ps");
-        write_string_attribute(im_wigner_v_dset, "Units", "nm / ps");
-        // Allowed three-phonon processes. See processes.hpp for
-        // details.
-        hsize_t c_dims[] = {nprocs};
-        DataSpace c_dspace(1, c_dims);
-        DataSet c_dset = h5f.createDataSet(
-            "/threeph_processes/class", PredType::STD_U64LE, c_dspace);
-        hsize_t q_dims[] = {nprocs, 3};
-        DataSpace q_dspace(2, q_dims);
-        DataSet q_dset = h5f.createDataSet(
-            "/threeph_processes/q", PredType::STD_U64LE, q_dspace);
-        DataSet alpha_dset = h5f.createDataSet(
-            "/threeph_processes/alpha", PredType::STD_U64LE, q_dspace);
-        // This dataset summarized the data in the "type",
-        // "gaussian_computed" and "vp2_computed" attributes.
-        // It is built as a bitmask with bits 0, 1 and 2 selecting
-        // between the two possible values of these attributes,
-        // respectively.
-        DataSet type_dset = h5f.createDataSet(
-            "/threeph_processes/type", PredType::STD_U8LE, c_dspace);
-        DataSet domega_dset = h5f.createDataSet(
-            "/threeph_processes/domega", PredType::IEEE_F64LE, c_dspace);
-        DataSet sigma_dset = h5f.createDataSet(
-            "/threeph_processes/sigma", PredType::IEEE_F64LE, c_dspace);
-        DataSet gaussian_dset = h5f.createDataSet(
-            "/threeph_processes/gaussian", PredType::IEEE_F64LE, c_dspace);
-        DataSet vp2_dset = h5f.createDataSet(
-            "/threeph_processes/vp2", PredType::IEEE_F64LE, c_dspace);
-        write_string_attribute(domega_dset, "Units", "rad / ps");
-        write_string_attribute(sigma_dset, "Units", "rad / ps");
-        write_string_attribute(gaussian_dset, "Units", "ps / rad");
-        write_string_attribute(vp2_dset, "Units", "THz**4 / (kg nm**2)");
-        hsize_t q_pos[] = {0, 0};
-        hsize_t q_count[] = {1, 3};
-        hsize_t q_dims_m[] = {3};
-        DataSpace q_dspace_m(1, q_dims_m);
-        q_dspace_m.selectAll();
-
-        // Begin by three-phonon processes identified by this
-        // MPI process.
-        for (hsize_t i = 0; i < my_nprocs; ++i) {
-            c_dspace.selectElements(H5S_SELECT_SET, 1, &i);
-            q_pos[0] = i;
-            q_dspace.selectHyperslab(H5S_SELECT_SET, q_count, q_pos);
-            c_dset.write(
-                &(processes[i].c), PredType::NATIVE_SIZE_T, scalar, c_dspace);
-            q_dset.write(processes[i].q.data(),
-                         PredType::NATIVE_SIZE_T,
-                         q_dspace_m,
-                         q_dspace);
-            alpha_dset.write(processes[i].alpha.data(),
-                             PredType::NATIVE_SIZE_T,
-                             q_dspace_m,
-                             q_dspace);
-            std::bitset<8> mask(0u);
-
-            if (processes[i].type == threeph_type::absorption)
-                mask.set(ABSORPTION_BIT);
-
-            if (processes[i].gaussian_computed)
-                mask.set(GAUSSIAN_BIT);
-
-            if (processes[i].vp2_computed)
-                mask.set(VP2_BIT);
-            uint8_t short_mask = static_cast<uint8_t>(mask.to_ulong());
-            type_dset.write(
-                &short_mask, PredType::NATIVE_UINT8, scalar, c_dspace);
-            domega_dset.write(&(processes[i].domega),
-                              PredType::NATIVE_DOUBLE,
-                              scalar,
-                              c_dspace);
-            sigma_dset.write(&(processes[i].sigma),
-                             PredType::NATIVE_DOUBLE,
-                             scalar,
-                             c_dspace);
-            gaussian_dset.write(&(processes[i].gaussian),
-                                PredType::NATIVE_DOUBLE,
-                                scalar,
-                                c_dspace);
-            vp2_dset.write(
-                &(processes[i].vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
-        }
-        // And proceed with the remaining MPI processes.
-        std::vector<Threeph_process> other;
-
-        for (auto ip = 1; ip < comm.size(); ++ip) {
-            other.clear();
-            comm.recv(ip, 0, other);
-            auto other_nproc = other.size();
-
-            for (hsize_t i = 0; i < other_nproc; ++i) {
-                ++q_pos[0];
-                c_dspace.selectElements(H5S_SELECT_SET, 1, &(q_pos[0]));
-                q_dspace.selectHyperslab(H5S_SELECT_SET, q_count, q_pos);
-                c_dset.write(
-                    &(other[i].c), PredType::NATIVE_SIZE_T, scalar, c_dspace);
-                q_dset.write(other[i].q.data(),
-                             PredType::NATIVE_SIZE_T,
-                             q_dspace_m,
-                             q_dspace);
-                alpha_dset.write(other[i].alpha.data(),
-                                 PredType::NATIVE_SIZE_T,
-                                 q_dspace_m,
-                                 q_dspace);
-                std::bitset<8> mask(0u);
-
-                if (other[i].type == threeph_type::absorption)
-                    mask.set(ABSORPTION_BIT);
-
-                if (other[i].gaussian_computed)
-                    mask.set(GAUSSIAN_BIT);
-
-                if (other[i].vp2_computed)
-                    mask.set(VP2_BIT);
-                uint8_t short_mask = static_cast<uint8_t>(mask.to_ulong());
-                type_dset.write(
-                    &short_mask, PredType::NATIVE_UINT8, scalar, c_dspace);
-                domega_dset.write(&(other[i].domega),
-                                  PredType::NATIVE_DOUBLE,
-                                  scalar,
-                                  c_dspace);
-                sigma_dset.write(&(other[i].sigma),
-                                 PredType::NATIVE_DOUBLE,
-                                 scalar,
-                                 c_dspace);
-                gaussian_dset.write(&(other[i].gaussian),
-                                    PredType::NATIVE_DOUBLE,
-                                    scalar,
-                                    c_dspace);
-                vp2_dset.write(
-                    &(other[i].vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
-            }
-        }
+    const auto bands =
+        static_cast<std::size_t>(grid.get_spectrum_at_q(0).omega.size());
+    const auto rows = checked_size({grid.get_nequivalences(), bands});
+    const auto limits = my_jobs(rows, comm.size(), comm.rank());
+    Threeph_processes empty(grid, limits[0], limits[1] - limits[0]);
+    const auto& processes =
+        input.nbranches() == 0 && input.empty() ? empty : input;
+    std::string local_error;
+    try {
+        processes.validate();
+        if (processes.nbranches() != bands ||
+            processes.nqpoints() != grid.nqpoints)
+            throw input_error("processes do not match the q grid");
     }
-    else {
-        // The remaining MPI processes just need to send their
-        // data to process 0.
-        comm.send(0, 0, processes);
+    catch (const std::exception& e) {
+        local_error = e.what();
     }
+    std::vector<std::string> errors;
+    boost::mpi::all_gather(comm, local_error, errors);
+    for (const auto& error : errors)
+        if (!error.empty())
+            throw input_error(error);
+    Partition local;
+    local.first = processes.first_row();
+    local.rows = processes.nrows();
+    for (int which = 0; which < 2; ++which) {
+        const auto& offsets = processes.table(sign_value(which)).offsets;
+        for (std::size_t row = 0; row < local.rows; ++row)
+            local.counts[which].push_back(offsets[row + 1] - offsets[row]);
+    }
+    std::vector<Partition> partitions;
+    boost::mpi::gather(comm, local, partitions, 0);
+    Offsets global;
+    std::unique_ptr<H5File> file;
+    root_action(comm, [&] {
+        std::size_t next = 0;
+        for (const auto& p : partitions) {
+            if (p.first != next || p.rows > rows - next)
+                throw input_error("MPI process rows must form consecutive, "
+                                  "disjoint partitions");
+            next += p.rows;
+        }
+        if (next != rows)
+            throw input_error("MPI process rows do not cover the grid");
+        file = std::make_unique<H5File>(filename, H5F_ACC_TRUNC);
+        write_metadata(*file, description, cell, symmetries, grid);
+        for (int which = 0; which < 2; ++which) {
+            global[which].assign(rows + 1, 0);
+            for (const auto& p : partitions)
+                for (std::size_t r = 0; r < p.rows; ++r)
+                    global[which][p.first + r + 1] = p.counts[which][r];
+            for (std::size_t r = 0; r < rows; ++r) {
+                if (global[which][r + 1] >
+                    std::numeric_limits<std::uint64_t>::max() -
+                        global[which][r])
+                    throw input_error("three-phonon offsets overflow uint64");
+                global[which][r + 1] += global[which][r];
+            }
+            const auto path = sign_path(which);
+            file->createGroup(path.substr(0, path.size() - 1));
+            create_column(
+                *file, path + "offsets", rows + 1, PredType::STD_U64LE);
+            write_column(*file,
+                         path + "offsets",
+                         0,
+                         global[which],
+                         PredType::NATIVE_UINT64);
+            const auto total = global[which].back();
+            const auto modes = checked_size({grid.nqpoints, bands});
+            const auto& index_type =
+                modes && modes - 1 > std::numeric_limits<std::uint32_t>::max()
+                    ? PredType::STD_U64LE
+                    : PredType::STD_U32LE;
+            create_column(*file, path + "second", total, index_type);
+            create_column(*file, path + "third", total, index_type);
+            for (auto name : {"domega", "sigma", "gaussian", "vp2"})
+                create_column(*file, path + name, total, PredType::IEEE_F64LE);
+            create_column(*file, path + "flags", total, PredType::STD_U8LE);
+            for (auto name : {"domega", "sigma", "gaussian", "vp2"}) {
+                auto dataset = file->openDataSet(path + name);
+                write_string_attribute(
+                    dataset,
+                    "Units",
+                    std::string(name) == "gaussian" ? "ps / rad"
+                    : std::string(name) == "vp2"    ? "THz**4 / (kg nm**2)"
+                                                    : "rad / ps");
+            }
+        }
+    });
+    // Transfer one rank's columns at a time. I/O uses bounded hyperslabs and
+    // root never builds a second global process table.
+    for (int rank = 0; rank < comm.size(); ++rank) {
+        Threeph_processes other;
+        if (rank != 0) {
+            if (comm.rank() == rank)
+                comm.send(0, 710, processes);
+            if (comm.rank() == 0)
+                comm.recv(rank, 710, other);
+        }
+        root_action(comm, [&] {
+            write_table(*file, rank == 0 ? processes : other, global);
+        });
+    }
+    root_action(comm, [&] {
+        file->flush(H5F_SCOPE_GLOBAL);
+        file.reset();
+    });
 }
 
-
-/// Read an HDF5 file's metadata and check if the
-/// versions are compatible.
-///
-/// @param[in] file - the HDF5 file
-/// @return the description stored in the file
-std::string read_file_attributes(H5File& file) {
-    unsigned int version;
-    Attribute version_attr = file.openAttribute("major_version");
-
-    version_attr.read(PredType::NATIVE_UINT, &version);
-
-    if (version != BULK_HDF5_MAJOR_VERSION)
-        throw input_error("wrong major version read from HDF5 file");
-    Attribute description_attr = file.openAttribute("description");
-    StrType description_type = description_attr.getStrType();
-    std::string nruter;
-    description_attr.read(description_type, nruter);
-    return nruter;
+namespace {
+Offsets read_offsets(H5File& file, const Gamma_grid& grid) {
+    const auto rows = checked_size(
+        {grid.get_nequivalences(),
+         static_cast<hsize_t>(grid.get_spectrum_at_q(0).omega.size())});
+    auto group = file.openGroup("/threeph_processes");
+    const std::string representatives_path =
+        "/threeph_processes/representatives";
+    require_dimensions(file, representatives_path, {grid.get_nequivalences()});
+    require_unsigned(file, representatives_path);
+    const auto representatives =
+        read_column<std::uint64_t>(file,
+                                   representatives_path,
+                                   0,
+                                   grid.get_nequivalences(),
+                                   PredType::NATIVE_UINT64);
+    for (std::size_t c = 0; c < representatives.size(); ++c)
+        if (representatives[c] != grid.get_representative(c))
+            throw input_error("stored irreducible representatives do not match "
+                              "the symmetry grid");
+    for (const auto& attribute :
+         std::vector<std::pair<std::string, std::string>>{
+             {"mode_encoding", "q*nbranches+branch; zero-based"},
+             {"row_encoding", "class*nbranches+branch; zero-based"}}) {
+        auto a = group.openAttribute(attribute.first);
+        std::string value;
+        a.read(a.getStrType(), value);
+        if (value != attribute.second)
+            throw input_error("unsupported " + attribute.first);
+    }
+    Offsets offsets;
+    for (int which = 0; which < 2; ++which) {
+        const auto path = sign_path(which);
+        require_dimensions(file, path + "offsets", {rows + 1});
+        require_unsigned(file, path + "offsets");
+        offsets[which] = read_column<std::uint64_t>(
+            file, path + "offsets", 0, rows + 1, PredType::NATIVE_UINT64);
+        validate_offsets(offsets[which], rows);
+        const auto n = offsets[which].back();
+        for (auto name :
+             {"second", "third", "domega", "sigma", "gaussian", "vp2", "flags"})
+            require_dimensions(file, path + name, {n});
+        require_unsigned(file, path + "second", true);
+        require_unsigned(file, path + "third", true);
+        require_unsigned(file, path + "flags");
+        if (file.openDataSet(path + "flags").getDataType().getSize() != 1)
+            throw input_error("process flags must be uint8");
+        for (auto name : {"domega", "sigma", "gaussian", "vp2"}) {
+            const auto type = file.openDataSet(path + name).getDataType();
+            if (type.getClass() != H5T_FLOAT || type.getSize() != 8)
+                throw input_error("process numeric columns must be float64");
+        }
+    }
+    return offsets;
 }
-
+Threeph_table read_table(H5File& file,
+                         const Gamma_grid& grid,
+                         const Offsets& offsets,
+                         int which,
+                         std::size_t first_row,
+                         std::size_t rows) {
+    const auto bands =
+        static_cast<std::size_t>(grid.get_spectrum_at_q(0).omega.size());
+    const auto modes = checked_size({grid.nqpoints, bands});
+    Threeph_table table(modes &&
+                        modes - 1 > std::numeric_limits<std::uint32_t>::max());
+    allocate_table(table, offsets[which], first_row, rows);
+    const auto first = offsets[which][first_row], n = table.size();
+    const auto path = sign_path(which);
+    // Even a 64-bit file can be read into a narrow in-memory table after bounds
+    // checks; the file's integer width is independent of the host size_t.
+    for (const auto partner : {"second", "third"}) {
+        auto dataset = file.openDataSet(path + partner);
+        auto& column =
+            std::string(partner) == "second" ? table.second : table.third;
+        std::vector<std::uint64_t> buffer(std::min(io_batch, n));
+        for (std::size_t i = 0; i < n; i += io_batch) {
+            const auto count = std::min(io_batch, n - i);
+            transfer_slice(dataset,
+                           false,
+                           PredType::NATIVE_UINT64,
+                           buffer.data(),
+                           {first + i},
+                           {count});
+            for (std::size_t j = 0; j < count; ++j)
+                column.set(i + j, buffer[j]);
+        }
+    }
+    table.domega = read_column<double>(
+        file, path + "domega", first, n, PredType::NATIVE_DOUBLE);
+    table.sigma = read_column<double>(
+        file, path + "sigma", first, n, PredType::NATIVE_DOUBLE);
+    table.gaussian = read_column<double>(
+        file, path + "gaussian", first, n, PredType::NATIVE_DOUBLE);
+    table.vp2 = read_column<double>(
+        file, path + "vp2", first, n, PredType::NATIVE_DOUBLE);
+    table.flags = read_column<std::uint8_t>(
+        file, path + "flags", first, n, PredType::NATIVE_UINT8);
+    return table;
+}
+struct Legacy_chunk {
+    std::vector<std::uint64_t> c, q, alpha;
+    std::vector<std::uint8_t> type;
+    std::vector<double> domega, sigma, gaussian, vp2;
+};
+Legacy_chunk legacy_chunk(H5File& file,
+                          std::size_t first,
+                          std::size_t n,
+                          bool full) {
+    const std::string path = "/threeph_processes/";
+    Legacy_chunk result;
+    result.c = read_column<std::uint64_t>(
+        file, path + "class", first, n, PredType::NATIVE_UINT64);
+    result.type = read_column<std::uint8_t>(
+        file, path + "type", first, n, PredType::NATIVE_UINT8);
+    result.alpha.resize(3 * n);
+    auto alpha = file.openDataSet(path + "alpha");
+    transfer_slice(alpha,
+                   false,
+                   PredType::NATIVE_UINT64,
+                   result.alpha.data(),
+                   {first, 0},
+                   {n, 3});
+    if (full) {
+        result.q.resize(3 * n);
+        auto q = file.openDataSet(path + "q");
+        transfer_slice(q,
+                       false,
+                       PredType::NATIVE_UINT64,
+                       result.q.data(),
+                       {first, 0},
+                       {n, 3});
+        result.domega = read_column<double>(
+            file, path + "domega", first, n, PredType::NATIVE_DOUBLE);
+        result.sigma = read_column<double>(
+            file, path + "sigma", first, n, PredType::NATIVE_DOUBLE);
+        result.gaussian = read_column<double>(
+            file, path + "gaussian", first, n, PredType::NATIVE_DOUBLE);
+        result.vp2 = read_column<double>(
+            file, path + "vp2", first, n, PredType::NATIVE_DOUBLE);
+    }
+    return result;
+}
+Offsets legacy_offsets(H5File& file, const Gamma_grid& grid, std::size_t& n) {
+    const std::string path = "/threeph_processes/";
+    const auto bands =
+        static_cast<std::size_t>(grid.get_spectrum_at_q(0).omega.size());
+    const auto rows = checked_size({grid.get_nequivalences(), bands});
+    const auto dims = dimensions(file.openDataSet(path + "class"));
+    if (dims.size() != 1)
+        throw input_error("invalid legacy process count");
+    n = checked_size(dims);
+    for (auto name : {"class", "type", "domega", "sigma", "gaussian", "vp2"})
+        require_dimensions(file, path + name, {n});
+    for (auto name : {"q", "alpha"})
+        require_dimensions(file, path + name, {n, 3});
+    for (auto name : {"class", "q", "alpha", "type"})
+        require_unsigned(file, path + name);
+    Offsets offsets;
+    for (auto& column : offsets)
+        column.assign(rows + 1, 0);
+    for (std::size_t first = 0; first < n; first += io_batch) {
+        const auto chunk =
+            legacy_chunk(file, first, std::min(io_batch, n - first), false);
+        for (std::size_t i = 0; i < chunk.c.size(); ++i) {
+            if (chunk.c[i] >= grid.get_nequivalences() || (chunk.type[i] & ~7u))
+                throw input_error("invalid legacy process class or flags");
+            for (int j = 0; j < 3; ++j)
+                if (chunk.alpha[3 * i + j] >= bands)
+                    throw input_error("invalid legacy branch index");
+            const auto row = chunk.c[i] * bands + chunk.alpha[3 * i];
+            ++offsets[chunk.type[i] & 1][row + 1];
+        }
+    }
+    for (auto& column : offsets)
+        std::partial_sum(column.begin(), column.end(), column.begin());
+    return offsets;
+}
+struct Legacy_payload {
+    std::vector<std::uint64_t> row, second, third;
+    std::vector<double> domega, sigma, gaussian, vp2;
+    std::vector<std::uint8_t> mask;
+    template <class Archive> void serialize(Archive& ar, unsigned int) {
+        ar & row & second & third & domega & sigma & gaussian & vp2 & mask;
+    }
+};
+std::unique_ptr<Threeph_processes> read_legacy(
+    H5File* file,
+    const Gamma_grid& grid,
+    const Offsets& offsets,
+    const std::vector<std::size_t>& boundaries,
+    std::size_t n,
+    const boost::mpi::communicator& comm) {
+    const auto first_row = boundaries[comm.rank()],
+               rows = boundaries[comm.rank() + 1] - first_row;
+    auto result = std::make_unique<Threeph_processes>(grid, first_row, rows);
+    const auto bands = result->nbranches();
+    std::array<Threeph_table, 2> tables{
+        {Threeph_table(result->table(threeph_type::emission).second.wide()),
+         Threeph_table(result->table(threeph_type::absorption).second.wide())}};
+    std::array<std::vector<std::uint64_t>, 2> cursor;
+    for (int which = 0; which < 2; ++which) {
+        allocate_table(tables[which], offsets[which], first_row, rows);
+        cursor[which] = tables[which].offsets;
+    }
+    // Two bounded passes: first count rows, then route each chunk to its owning
+    // rank and fill preallocated columns. No global AoS or global SoA copy.
+    for (std::size_t first = 0; first < n; first += io_batch) {
+        std::vector<Legacy_payload> payloads(comm.rank() == 0 ? comm.size()
+                                                              : 0);
+        root_action(comm, [&] {
+            const auto chunk =
+                legacy_chunk(*file, first, std::min(io_batch, n - first), true);
+            for (std::size_t i = 0; i < chunk.c.size(); ++i) {
+                for (int j = 0; j < 3; ++j)
+                    if (chunk.q[3 * i + j] >= grid.nqpoints)
+                        throw input_error("invalid legacy q-point index");
+                if (chunk.q[3 * i] != grid.get_representative(chunk.c[i]))
+                    throw input_error("legacy incoming q point is not a class "
+                                      "representative");
+                const auto row = chunk.c[i] * bands + chunk.alpha[3 * i];
+                const auto owner = std::upper_bound(boundaries.begin(),
+                                                    boundaries.end(),
+                                                    row) -
+                                   boundaries.begin() - 1;
+                auto& payload = payloads[owner];
+                payload.row.push_back(row);
+                payload.second.push_back(chunk.q[3 * i + 1] * bands +
+                                         chunk.alpha[3 * i + 1]);
+                payload.third.push_back(chunk.q[3 * i + 2] * bands +
+                                        chunk.alpha[3 * i + 2]);
+                payload.domega.push_back(chunk.domega[i]);
+                payload.sigma.push_back(chunk.sigma[i]);
+                payload.gaussian.push_back(chunk.type[i] & 2 ? chunk.gaussian[i]
+                                                             : 0.);
+                payload.vp2.push_back(chunk.type[i] & 4 ? chunk.vp2[i] : 0.);
+                payload.mask.push_back(chunk.type[i]);
+            }
+        });
+        Legacy_payload payload;
+        if (comm.rank() == 0) {
+            for (int rank = 1; rank < comm.size(); ++rank)
+                comm.send(rank, 712, payloads[rank]);
+            payload = std::move(payloads[0]);
+        }
+        else
+            comm.recv(0, 712, payload);
+        for (std::size_t i = 0; i < payload.row.size(); ++i) {
+            const auto which = payload.mask[i] & 1;
+            const auto row = payload.row[i] - first_row;
+            const auto dest = cursor[which][row]++;
+            auto& table = tables[which];
+            table.second.set(dest, payload.second[i]);
+            table.third.set(dest, payload.third[i]);
+            table.domega[dest] = payload.domega[i];
+            table.sigma[dest] = payload.sigma[i];
+            table.gaussian[dest] = payload.gaussian[i];
+            table.vp2[dest] = payload.vp2[i];
+            table.flags[dest] = (payload.mask[i] >> 1) & 3;
+        }
+    }
+    for (int which = 0; which < 2; ++which)
+        result->set_table(sign_value(which), std::move(tables[which]));
+    return result;
+}
+} // namespace
 
 std::tuple<std::string,
            std::unique_ptr<Crystal_structure>,
            std::unique_ptr<Symmetry_operations>,
            std::unique_ptr<Gamma_grid>,
-           std::unique_ptr<std::vector<Threeph_process>>>
+           std::unique_ptr<Threeph_processes>>
 load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm) {
-    auto my_id = comm.rank();
-
-    std::unique_ptr<H5File> h5f;
-    std::string description;
-
-    if (my_id == 0) {
-        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDONLY);
-        description = read_file_attributes(*h5f);
-    }
-    // Each piece of data read is broadcast to all
-    // processes in this communicator.
-    DataSpace scalar;
-    // Lattice vectors.
-    Eigen::MatrixXd lattvec(3, 3);
-
-    if (my_id == 0) {
-        DataSet lattvec_dset = h5f->openDataSet("/crystal_structure/lattvec");
-        DataSpace lattvec_dspace = lattvec_dset.getSpace();
-        hsize_t pos[2];
-        double value;
-
-        for (hsize_t i = 0; i < 3; ++i) {
-            pos[0] = i;
-
-            for (hsize_t j = 0; j < 3; ++j) {
-                pos[1] = j;
-                lattvec_dspace.selectElements(H5S_SELECT_SET, 1, pos);
-                lattvec_dset.read(
-                    &value, PredType::NATIVE_DOUBLE, scalar, lattvec_dspace);
-                lattvec(i, j) = value;
-            }
-        }
-    }
-    boost::mpi::broadcast(comm, lattvec.data(), 9, 0);
-    boost::mpi::broadcast(comm, description, 0);
-    // Atomic positions.
-    hsize_t natoms;
-    Eigen::MatrixXd positions;
-
-    if (my_id == 0) {
-        DataSet pos_dset = h5f->openDataSet("/crystal_structure/positions");
-        DataSpace pos_dspace = pos_dset.getSpace();
-        hsize_t pos_size[2];
-        pos_dspace.getSimpleExtentDims(pos_size, nullptr);
-        natoms = pos_size[1];
-        positions.resize(pos_size[0], pos_size[1]);
-        hsize_t pos_pos[2];
-        double value;
-
-        for (hsize_t i = 0; i < 3; ++i) {
-            pos_pos[0] = i;
-
-            for (hsize_t j = 0; j < natoms; ++j) {
-                pos_pos[1] = j;
-                pos_dspace.selectElements(H5S_SELECT_SET, 1, pos_pos);
-                pos_dset.read(
-                    &value, PredType::NATIVE_DOUBLE, scalar, pos_dspace);
-                positions(i, j) = value;
-            }
-        }
-    }
-    boost::mpi::broadcast(comm, natoms, 0);
-
-    if (my_id != 0)
-        positions.resize(3, natoms);
-    boost::mpi::broadcast(comm, positions.data(), 3 * natoms, 0);
-    // Elements.
-    std::vector<std::string> elements;
-
-    if (my_id == 0) {
-        DataSet elements_dset = h5f->openDataSet("/crystal_structure/elements");
-        StrType elements_type = elements_dset.getStrType();
-        DataSpace elements_dspace = elements_dset.getSpace();
-        hsize_t nelements;
-        elements_dspace.getSimpleExtentDims(&nelements, nullptr);
-        std::string value;
-
-        for (hsize_t i = 0; i < nelements; ++i) {
-            elements_dspace.selectElements(H5S_SELECT_SET, 1, &i);
-            elements_dset.read(value, elements_type, scalar, elements_dspace);
-	    value.erase(std::remove_if(value.begin(), value.end(), [](char c) {
-                       return  (c == '\t') or (c == '\n') or (c == '\r') or
-		               (c == '\0') or (c < 32 || c > 126);
-                     }), value.end());
-            elements.push_back(value);
-        }
-    }
-    boost::mpi::broadcast(comm, elements, 0);
-    // Number of atoms belonging to each element.
-    std::vector<int> numbers(elements.size());
-
-    if (my_id == 0) {
-        DataSet numbers_dset = h5f->openDataSet("/crystal_structure/numbers");
-        DataSpace numbers_dspace = numbers_dset.getSpace();
-        numbers_dset.read(numbers.data(),
-                          PredType::NATIVE_INT,
-                          numbers_dspace,
-                          numbers_dspace);
-    }
-    boost::mpi::broadcast(comm, numbers, 0);
-    // Build a Crystal_structure object.
-    auto nruter1 =
-        alma::make_unique<Crystal_structure>(lattvec, positions, elements, numbers);
-    // Tolerance for symmetry search.
-    double symprec;
-
-    if (my_id == 0) {
-        DataSet symprec_dset = h5f->openDataSet("/symmetry_operations/symprec");
-        symprec_dset.read(&symprec, PredType::NATIVE_DOUBLE, scalar, scalar);
-    }
-    boost::mpi::broadcast(comm, symprec, 0);
-    // Build a Symmetry_operations object.
-    auto nruter2 = alma::make_unique<Symmetry_operations>(*nruter1, symprec);
-    // Dimensions of the q-point grid.
-    int nq[3];
-
-    if (my_id == 0) {
-        DataSet nq_dset = h5f->openDataSet("/qpoint_grid/nq");
-        DataSpace nq_dspace = nq_dset.getSpace();
-        nq_dspace.selectAll();
-        nq_dset.read(nq, PredType::NATIVE_INT, nq_dspace, nq_dspace);
-    }
-    boost::mpi::broadcast(comm, nq, 3, 0);
-    // Build a stub Gamma_grid object, to be filled in the
-    // next section
-    auto nruter3 =
-        alma::make_unique<Gamma_grid>(*nruter1, *nruter2, nq[0], nq[1], nq[2]);
-    // Harmonic properties at each q point.
-    hsize_t nqpoints;
-    hsize_t nmodes;
-
-    if (my_id == 0) {
-        DataSet omega_dset = h5f->openDataSet("/qpoint_grid/omega");
-        DataSpace omega_dspace = omega_dset.getSpace();
-        hsize_t omega_dims[2];
-        omega_dspace.getSimpleExtentDims(omega_dims, nullptr);
-        nqpoints = omega_dims[0];
-        nmodes = omega_dims[1];
-        boost::mpi::broadcast(comm, nqpoints, 0);
-        boost::mpi::broadcast(comm, nmodes, 0);
-        DataSet vg_dset = h5f->openDataSet("/qpoint_grid/vg");
-        DataSpace vg_dspace = vg_dset.getSpace();
-        DataSet wf_re_dset = h5f->openDataSet("/qpoint_grid/re_wf");
-        DataSpace wf_dspace = wf_re_dset.getSpace();
-        DataSet wf_im_dset = h5f->openDataSet("/qpoint_grid/im_wf");
-        DataSet re_wigner_v_dset = h5f->openDataSet("/qpoint_grid/re_wigner_v");
-        DataSpace wigner_v_dspace = re_wigner_v_dset.getSpace();
-        DataSet im_wigner_v_dset = h5f->openDataSet("/qpoint_grid/im_wigner_v");
-        Eigen::ArrayXd omega(nmodes);
-        Eigen::MatrixXcd wfs(nmodes, nmodes);
-        Eigen::ArrayXXd vg(3, nmodes);
-        Eigen::ArrayXXcd wigner_v(3, nmodes*nmodes);
-        hsize_t omega_start[2];
-        hsize_t omega_count[2];
-        hsize_t vg_pos[3];
-        hsize_t wf_pos[3];
-        hsize_t wigner_v_pos[3];
-        double value;
-        double re;
-        double im;
-        omega_start[1] = 0;
-        omega_count[0] = 1;
-        omega_count[1] = nmodes;
-        hsize_t omega_dims_m[] = {nmodes};
-        DataSpace omega_dspace_m(1, omega_dims_m);
-        omega_dspace_m.selectAll();
-
-        for (hsize_t i = 0; i < nqpoints; ++i) {
-            omega_start[0] = i;
-            vg_pos[0] = i;
-            wigner_v_pos[0] = i;
-            wf_pos[0] = i;
-            omega_dspace.selectHyperslab(
-                H5S_SELECT_SET, omega_count, omega_start);
-            omega_dset.read(omega.data(),
-                            PredType::NATIVE_DOUBLE,
-                            omega_dspace_m,
-                            omega_dspace);
-            boost::mpi::broadcast(comm, omega.data(), omega.size(), 0);
-
-            for (hsize_t j1 = 0; j1 < nmodes; ++j1) {
-                wf_pos[1] = j1;
-
-                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-                    wf_pos[2] = j2;
-                    wf_dspace.selectElements(H5S_SELECT_SET, 1, wf_pos);
-                    wf_re_dset.read(
-                        &re, PredType::NATIVE_DOUBLE, scalar, wf_dspace);
-                    wf_im_dset.read(
-                        &im, PredType::NATIVE_DOUBLE, scalar, wf_dspace);
-                    boost::mpi::broadcast(comm, re, 0);
-                    boost::mpi::broadcast(comm, im, 0);
-                    wfs(j1, j2) = std::complex<double>(re, im);
-                }
-            }
-
-            for (hsize_t j1 = 0; j1 < 3; ++j1) {
-                vg_pos[1] = j1;
-                wigner_v_pos[1] = j1;
-
-                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-                    vg_pos[2] = j2;
-                    vg_dspace.selectElements(H5S_SELECT_SET, 1, vg_pos);
-                    vg_dset.read(
-                        &value, PredType::NATIVE_DOUBLE, scalar, vg_dspace);
-                    boost::mpi::broadcast(comm, value, 0);
-                    vg(j1, j2) = value;
-
-                    for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
-                        wigner_v_pos[2] = j2+nmodes*j3;
-                        wigner_v_dspace.selectElements(H5S_SELECT_SET, 1, wigner_v_pos);
-                        re_wigner_v_dset.read(
-                            &re, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
-                        im_wigner_v_dset.read(
-                            &im, PredType::NATIVE_DOUBLE, scalar, wigner_v_dspace);
-                        boost::mpi::broadcast(comm, re, 0);
-                        boost::mpi::broadcast(comm, im, 0);
-                        wigner_v(j1, j2+nmodes*j3) = std::complex<double>(re, im);
-                    }
-                }
-            }
-            nruter3->spectrum.emplace_back(omega, wfs, vg, wigner_v);
-        }
-    }
+    std::unique_ptr<H5File> file;
+    Metadata metadata;
+    root_action(comm, [&] {
+        file = std::make_unique<H5File>(filename, H5F_ACC_RDONLY);
+        metadata = read_metadata(*file);
+    });
+    boost::mpi::broadcast(comm, metadata, 0);
+    Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> lattice(
+        metadata.lattice.data());
+    Eigen::Map<
+        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
+        positions(metadata.positions.data(), 3, metadata.positions.size() / 3);
+    auto cell = std::make_unique<Crystal_structure>(
+        lattice, positions, metadata.elements, metadata.numbers);
+    auto symmetries =
+        std::make_unique<Symmetry_operations>(*cell, metadata.symprec);
+    auto grid = std::make_unique<Gamma_grid>(
+        *cell, *symmetries, metadata.nq[0], metadata.nq[1], metadata.nq[2]);
+    grid->spectrum.swap(metadata.spectrum);
+    const auto rows = checked_size(
+        {grid->get_nequivalences(),
+         static_cast<hsize_t>(grid->get_spectrum_at_q(0).omega.size())});
+    Offsets offsets;
+    std::size_t legacy_count = 0;
+    root_action(comm, [&] {
+        offsets = metadata.minor >= 4
+                      ? read_offsets(*file, *grid)
+                      : legacy_offsets(*file, *grid, legacy_count);
+    });
+    boost::mpi::broadcast(comm, offsets, 0);
+    boost::mpi::broadcast(comm, legacy_count, 0);
+    const auto boundaries = partition_rows(offsets, rows, comm.size());
+    std::unique_ptr<Threeph_processes> processes;
+    if (metadata.minor < 4)
+        processes = read_legacy(
+            file.get(), *grid, offsets, boundaries, legacy_count, comm);
     else {
-        boost::mpi::broadcast(comm, nqpoints, 0);
-        boost::mpi::broadcast(comm, nmodes, 0);
-        Eigen::ArrayXd omega(nmodes);
-        Eigen::MatrixXcd wfs(nmodes, nmodes);
-        Eigen::ArrayXXd vg(3, nmodes);
-        Eigen::ArrayXXcd wigner_v(3, nmodes*nmodes);
-        double value;
-        double re;
-        double im;
-
-        for (hsize_t i = 0; i < nqpoints; ++i) {
-            boost::mpi::broadcast(comm, omega.data(), omega.size(), 0);
-
-            for (hsize_t j1 = 0; j1 < nmodes; ++j1) {
-                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-                    boost::mpi::broadcast(comm, re, 0);
-                    boost::mpi::broadcast(comm, im, 0);
-                    wfs(j1, j2) = std::complex<double>(re, im);
+        for (int rank = 0; rank < comm.size(); ++rank) {
+            std::unique_ptr<Threeph_processes> local;
+            root_action(comm, [&] {
+                const auto first = boundaries[rank],
+                           count = boundaries[rank + 1] - first;
+                local =
+                    std::make_unique<Threeph_processes>(*grid, first, count);
+                for (int which = 0; which < 2; ++which)
+                    local->set_table(
+                        sign_value(which),
+                        read_table(*file, *grid, offsets, which, first, count));
+            });
+            if (rank == 0) {
+                if (comm.rank() == 0)
+                    processes = std::move(local);
+            }
+            else {
+                if (comm.rank() == 0)
+                    comm.send(rank, 713, *local);
+                if (comm.rank() == rank) {
+                    processes = std::make_unique<Threeph_processes>();
+                    comm.recv(0, 713, *processes);
                 }
             }
-
-            for (hsize_t j1 = 0; j1 < 3; ++j1) {
-                for (hsize_t j2 = 0; j2 < nmodes; ++j2) {
-                    boost::mpi::broadcast(comm, value, 0);
-                    vg(j1, j2) = value;
-                    for (hsize_t j3 = 0; j3 < nmodes; ++j3) {
-                        boost::mpi::broadcast(comm, re, 0);
-                        boost::mpi::broadcast(comm, im, 0);
-                        wigner_v(j1, j2+nmodes*j3) = std::complex<double>(re, im);
-                    }
-                }
-            }
-            nruter3->spectrum.emplace_back(omega, wfs, vg, wigner_v);
         }
     }
-    // Create an empty vector of Threeph_process objects.
-    auto nruter4 = alma::make_unique<std::vector<Threeph_process>>();
-
-    if (my_id == 0) {
-        DataSet c_dset = h5f->openDataSet("/threeph_processes/class");
-        DataSet q_dset = h5f->openDataSet("/threeph_processes/q");
-        DataSet alpha_dset = h5f->openDataSet("/threeph_processes/alpha");
-        DataSet type_dset = h5f->openDataSet("/threeph_processes/type");
-        DataSet domega_dset = h5f->openDataSet("/threeph_processes/domega");
-        DataSet sigma_dset = h5f->openDataSet("/threeph_processes/sigma");
-        DataSet gaussian_dset = h5f->openDataSet("/threeph_processes/gaussian");
-        DataSet vp2_dset = h5f->openDataSet("/threeph_processes/vp2");
-        DataSpace c_dspace = c_dset.getSpace();
-        DataSpace q_dspace = q_dset.getSpace();
-        // Read the total number of three-phonon processes
-        // stored in the file.
-        hsize_t nprocs;
-        c_dspace.getSimpleExtentDims(&nprocs, nullptr);
-        auto nmpi = comm.size();
-        // Read the first few for process 0 and send the rest
-        // to the other MPI processes.
-        hsize_t q_pos[] = {0, 0};
-        hsize_t q_count[] = {1, 3};
-        hsize_t q_dims_m[] = {3};
-        std::size_t c_value;
-        std::array<std::size_t, 3> q_value;
-        std::array<std::size_t, 3> alpha_value;
-        uint8_t short_mask;
-        double domega_value;
-        double sigma_value;
-        DataSpace q_dspace_m(1, q_dims_m);
-
-        for (decltype(nmpi) impi = 0; impi < nmpi; ++impi) {
-            std::vector<Threeph_process> other;
-            auto limits = my_jobs(nprocs, nmpi, impi);
-
-            if (impi != 0) {
-                other.reserve(limits[1] - limits[0]);
-                comm.send(impi, 0, limits[1] - limits[0]);
-            }
-
-            for (hsize_t i = limits[0]; i < limits[1]; ++i) {
-                c_dspace.selectElements(H5S_SELECT_SET, 1, &i);
-                q_pos[0] = i;
-                q_dspace.selectHyperslab(H5S_SELECT_SET, q_count, q_pos);
-                c_dset.read(
-                    &c_value, PredType::NATIVE_SIZE_T, scalar, c_dspace);
-                q_dset.read(q_value.data(),
-                            PredType::NATIVE_SIZE_T,
-                            q_dspace_m,
-                            q_dspace);
-                alpha_dset.read(alpha_value.data(),
-                                PredType::NATIVE_SIZE_T,
-                                q_dspace_m,
-                                q_dspace);
-                type_dset.read(
-                    &short_mask, PredType::NATIVE_UINT8, scalar, c_dspace);
-                std::bitset<8> mask(static_cast<unsigned long>(short_mask));
-                domega_dset.read(
-                    &domega_value, PredType::NATIVE_DOUBLE, scalar, c_dspace);
-                sigma_dset.read(
-                    &sigma_value, PredType::NATIVE_DOUBLE, scalar, c_dspace);
-                threeph_type type_value =
-                    (mask.test(ABSORPTION_BIT) ? threeph_type::absorption
-                                               : threeph_type::emission);
-                Threeph_process p(c_value,
-                                  q_value,
-                                  alpha_value,
-                                  type_value,
-                                  domega_value,
-                                  sigma_value);
-
-                if (mask.test(GAUSSIAN_BIT)) {
-                    p.gaussian_computed = true;
-                    gaussian_dset.read(&(p.gaussian),
-                                       PredType::NATIVE_DOUBLE,
-                                       scalar,
-                                       c_dspace);
-                }
-
-                if (mask.test(VP2_BIT)) {
-                    p.vp2_computed = true;
-                    vp2_dset.read(
-                        &(p.vp2), PredType::NATIVE_DOUBLE, scalar, c_dspace);
-                }
-
-                if (impi == 0)
-                    nruter4->emplace_back(p);
-                else
-                    other.emplace_back(p);
-            }
-
-            if (impi != 0)
-                comm.send(impi, 0, other);
-        }
-    }
-    else {
-        std::size_t toreserve;
-        comm.recv(0, 0, toreserve);
-        nruter4->reserve(toreserve);
-        comm.recv(0, 0, *nruter4);
-    }
-    // Return a tuple with all objects.
-    return std::make_tuple(description,
-                           std::move(nruter1),
-                           std::move(nruter2),
-                           std::move(nruter3),
-                           std::move(nruter4));
+    return std::make_tuple(metadata.description,
+                           std::move(cell),
+                           std::move(symmetries),
+                           std::move(grid),
+                           std::move(processes));
 }
 
 
@@ -861,7 +1121,7 @@ std::vector<std::string> list_scattering_subgroups(
 
     // The file is only read from the process with id 0.
     if (my_id == 0) {
-        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDONLY);
+        h5f = std::make_unique<H5File>(filename, H5F_ACC_RDONLY);
         // Try to open the "scattering" group in the file,
         // and stop if it does not exist.
         bool found = true;
@@ -910,7 +1170,7 @@ Scattering_subgroup load_scattering_subgroup(
     std::vector<std::string> groups;
 
     if (my_id == 0) {
-        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDONLY);
+        h5f = std::make_unique<H5File>(filename, H5F_ACC_RDONLY);
         std::string fullname{std::string("/scattering/") + groupname};
         // Open the group (the operation can fail if it does not
         // exist).
@@ -1012,7 +1272,7 @@ void write_scattering_subgroup(const char* filename,
     // Processes other than ID 0 do not do anything other than wait.
     if (my_id == 0) {
         std::unique_ptr<H5File> h5f;
-        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDWR);
+        h5f = std::make_unique<H5File>(filename, H5F_ACC_RDWR);
         // Check if the shape of the scattering rates is compatible
         // with the crystal structure and q-point grid stored in
         // the file.
@@ -1055,300 +1315,199 @@ void write_scattering_subgroup(const char* filename,
     comm.barrier();
 }
 
+
 void write_ifcs_subgroup(const char* filename,
-                         Harmonic_ifcs& harmonic_ifcs,
-                         const std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
+                         const Harmonic_ifcs& harmonic,
+                         const std::vector<Thirdorder_ifcs>& anharmonic,
                          const boost::mpi::communicator& comm) {
-    
-    auto my_id = comm.rank();
-
-    // Processes other than ID 0 do not do anything other than wait.
-    if (my_id == 0) {
-        std::unique_ptr<H5File> h5f;
-        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDWR);
-        // Check if the "/ifcs" group exists,
-        // create it otherwise.
-        Group ifcs;
-        try {
-            ifcs = h5f->openGroup("/ifcs");
+    root_action(comm, [&] {
+        if (harmonic.na <= 0 || harmonic.nb <= 0 || harmonic.nc <= 0 ||
+            harmonic.ifcs.empty() ||
+            harmonic.pos.size() != harmonic.ifcs.size())
+            throw value_error("invalid harmonic IFCs");
+        H5File file(filename, H5F_ACC_RDWR);
+        if (H5Lexists(file.getId(), "/ifcs", H5P_DEFAULT) <= 0)
+            file.createGroup("/ifcs");
+        if (H5Lexists(file.getId(), "/ifcs/harmonic", H5P_DEFAULT) > 0 ||
+            H5Lexists(file.getId(), "/ifcs/anharmonic", H5P_DEFAULT) > 0)
+            throw value_error("IFC subgroups already exist");
+        const auto dofs = harmonic.ifcs.front().rows();
+        if (dofs == 0 || dofs % 3)
+            throw value_error("invalid harmonic IFC matrix dimensions");
+        for (const auto& block : harmonic.ifcs)
+            if (block.rows() != dofs || block.cols() != dofs ||
+                !block.allFinite())
+                throw value_error(
+                    "inconsistent harmonic IFC matrix dimensions or values");
+        file.createGroup("/ifcs/harmonic");
+        file.createGroup("/ifcs/anharmonic");
+        create_column(file, "/ifcs/harmonic/supercell", 3, PredType::STD_I32LE);
+        write_column(file,
+                     "/ifcs/harmonic/supercell",
+                     0,
+                     std::vector<int>{harmonic.na, harmonic.nb, harmonic.nc},
+                     PredType::NATIVE_INT);
+        const hsize_t n = harmonic.ifcs.size(), d = static_cast<hsize_t>(dofs);
+        const hsize_t pdims[] = {n, 3}, hdims[] = {n, d * d};
+        auto positions = file.createDataSet(
+            "/ifcs/harmonic/Rj", PredType::STD_I32LE, DataSpace(2, pdims));
+        auto constants = file.createDataSet("/ifcs/harmonic/force_constants",
+                                            PredType::IEEE_F64LE,
+                                            DataSpace(2, hdims));
+        write_string_attribute(
+            constants, "matrix_order", "column-major; row+ndof*column");
+        for (hsize_t k = 0; k < n; ++k) {
+            transfer_slice(positions,
+                           true,
+                           PredType::NATIVE_INT,
+                           const_cast<int*>(harmonic.pos[k].data()),
+                           {k, 0},
+                           {1, 3});
+            transfer_slice(constants,
+                           true,
+                           PredType::NATIVE_DOUBLE,
+                           const_cast<double*>(harmonic.ifcs[k].data()),
+                           {k, 0},
+                           {1, d * d});
         }
-        catch (GroupIException e) {
-            ifcs = h5f->createGroup("/ifcs");
+        const hsize_t na = anharmonic.size();
+        const hsize_t rdims[] = {na, 3}, adims[] = {na, 27};
+        auto rj = file.createDataSet(
+            "/ifcs/anharmonic/Rj", PredType::IEEE_F64LE, DataSpace(2, rdims));
+        auto rk = file.createDataSet(
+            "/ifcs/anharmonic/Rk", PredType::IEEE_F64LE, DataSpace(2, rdims));
+        auto atoms = file.createDataSet(
+            "/ifcs/anharmonic/atoms", PredType::STD_U64LE, DataSpace(2, rdims));
+        auto values = file.createDataSet("/ifcs/anharmonic/force_constants",
+                                         PredType::IEEE_F64LE,
+                                         DataSpace(2, adims));
+        for (hsize_t k = 0; k < na; ++k) {
+            const auto& block = anharmonic[k];
+            if (block.rj.size() != 3 || block.rk.size() != 3 ||
+                !block.rj.allFinite() || !block.rk.allFinite() ||
+                std::max({block.i, block.j, block.k}) >=
+                    static_cast<std::size_t>(dofs / 3))
+                throw value_error("invalid third-order IFC metadata");
+            std::uint64_t indices[] = {block.i, block.j, block.k};
+            std::array<double, 27> data;
+            for (int a = 0; a < 3; ++a)
+                for (int b = 0; b < 3; ++b)
+                    for (int c = 0; c < 3; ++c)
+                        data[c + 3 * (b + 3 * a)] = block.ifc(a, b, c);
+            if (!std::all_of(data.begin(), data.end(), [](double x) {
+                    return std::isfinite(x);
+                }))
+                throw value_error("nonfinite third-order IFC");
+            transfer_slice(rj,
+                           true,
+                           PredType::NATIVE_DOUBLE,
+                           const_cast<double*>(block.rj.data()),
+                           {k, 0},
+                           {1, 3});
+            transfer_slice(rk,
+                           true,
+                           PredType::NATIVE_DOUBLE,
+                           const_cast<double*>(block.rk.data()),
+                           {k, 0},
+                           {1, 3});
+            transfer_slice(
+                atoms, true, PredType::NATIVE_UINT64, indices, {k, 0}, {1, 3});
+            transfer_slice(values,
+                           true,
+                           PredType::NATIVE_DOUBLE,
+                           data.data(),
+                           {k, 0},
+                           {1, 27});
         }
-
-        /// Obtain the number of harmonic IFCs
-        std::size_t n_harmonic_ifcs = harmonic_ifcs.ifcs.size();
-        std::size_t ndof = harmonic_ifcs.ifcs[0].rows();
-
-        /// Write the supercell used to compute the harmonic IFCs
-        int n_supercell[] = {harmonic_ifcs.na, harmonic_ifcs.nb, harmonic_ifcs.nc};
-        hsize_t nsupercell_dims[] = {3};
-        DataSpace nsupercell_dspace(1, nsupercell_dims);
-        DataSet nsupercell_dset = h5f->createDataSet(
-            "/ifcs/harmonic/supercell", PredType::STD_I32LE, nsupercell_dspace);
-        nsupercell_dspace.selectAll();
-        nsupercell_dset.write(n_supercell, PredType::NATIVE_INT, nsupercell_dspace, nsupercell_dspace);
-
-        hsize_t positions_dims[] = {n_harmonic_ifcs, 3};
-        DataSpace positions_dspace(2, positions_dims);
-        DataSet positions_dset = h5f->createDataSet(
-            "/ifcs/harmonic/Rj", PredType::NATIVE_INT, positions_dspace);
-
-        hsize_t hifcs_dims[] = {n_harmonic_ifcs, ndof*ndof};
-        DataSpace hifcs_dspace(2, hifcs_dims);
-        DataSet hifcs_dset = h5f->createDataSet(
-            "/ifcs/harmonic/force_constants", PredType::IEEE_F64LE, hifcs_dspace);
-        
-        hsize_t positions_pos[] = {0, 0};
-        hsize_t positions_count[] = {1, 3};
-        hsize_t positions_dims_m[] = {3};
-        DataSpace positions_dspace_m(1, positions_dims_m);
-
-        hsize_t hifcs_pos[] = {0, 0};
-        hsize_t hifcs_count[] = {1, ndof*ndof};
-        hsize_t hifcs_dims_m[] = {ndof*ndof};
-        DataSpace hifcs_dspace_m(1, hifcs_dims_m);
-
-        // Write the IFCs
-        for (std::size_t i = 0; i < n_harmonic_ifcs; i++) {
-            ++positions_pos[0];
-            positions_dspace.selectHyperslab(H5S_SELECT_SET, positions_count, positions_pos);
-            positions_dset.write(harmonic_ifcs.pos[i].data(),
-                                 PredType::NATIVE_INT,
-                                 positions_dspace_m,
-                                 positions_dspace);
-            ++hifcs_pos[0];
-            hifcs_dspace.selectHyperslab(H5S_SELECT_SET, hifcs_count, hifcs_pos);
-            hifcs_dset.write(harmonic_ifcs.ifcs[i].data(),
-                             PredType::IEEE_F64LE,
-                             hifcs_dspace_m,
-                             hifcs_dspace);
-        }
-
-        /// Obtain the number of harmonic IFCs
-        std::size_t n_anharmonic_ifcs = anharmonic_ifcs.size();
-
-        hsize_t Rk_dims[] = {n_anharmonic_ifcs, 3};
-        DataSpace Rk_dspace(2, Rk_dims);
-        DataSet Rk_dset = h5f->createDataSet(
-            "/ifcs/anharmonic/Rk", PredType::IEEE_F64LE, Rk_dspace);
-        hsize_t Rj_dims[] = {n_anharmonic_ifcs, 3};
-        DataSpace Rj_dspace(2, Rj_dims);
-        DataSet Rj_dset = h5f->createDataSet(
-            "/ifcs/anharmonic/Rj", PredType::IEEE_F64LE, Rj_dspace);
-        hsize_t atoms_dims[] = {n_anharmonic_ifcs, 3};
-        DataSpace atoms_dspace(2, atoms_dims);
-        DataSet atoms_dset = h5f->createDataSet(
-            "/ifcs/anharmonic/atoms", PredType::NATIVE_SIZE_T, atoms_dspace);
-
-        hsize_t aifcs_dims[] = {n_anharmonic_ifcs, 27};
-        DataSpace aifcs_dspace(2, aifcs_dims);
-        DataSet aifcs_dset = h5f->createDataSet(
-            "/ifcs/anharmonic/force_constants", PredType::IEEE_F64LE, aifcs_dspace);
-
-
-        hsize_t Rk_pos[] = {0, 0};
-        hsize_t Rk_count[] = {1, 3};
-        hsize_t Rk_dims_m[] = {3};
-        DataSpace Rk_dspace_m(1, Rk_dims_m);
-        hsize_t Rj_pos[] = {0, 0};
-        hsize_t Rj_count[] = {1, 3};
-        hsize_t Rj_dims_m[] = {3};
-        DataSpace Rj_dspace_m(1, Rj_dims_m);
-        hsize_t atoms_pos[] = {0, 0};
-        hsize_t atoms_count[] = {1, 3};
-        hsize_t atoms_dims_m[] = {3};
-        DataSpace atoms_dspace_m(1, atoms_dims_m);
-
-        hsize_t aifcs_pos[] = {0, 0};
-        hsize_t aifcs_count[] = {1, 27};
-        hsize_t aifcs_dims_m[] = {27};
-        DataSpace aifcs_dspace_m(1, aifcs_dims_m);
-
-
-        for (std::size_t i = 0; i < n_anharmonic_ifcs; i++) {
-            ++Rk_pos[0];
-            Rk_dspace.selectHyperslab(H5S_SELECT_SET, Rk_count, Rk_pos);
-            Rk_dset.write(anharmonic_ifcs[i].rk.data(),
-                          PredType::IEEE_F64LE,
-                          Rk_dspace_m,
-                          Rk_dspace);
-            ++Rj_pos[0];
-            Rj_dspace.selectHyperslab(H5S_SELECT_SET, Rj_count, Rj_pos);
-            Rj_dset.write(anharmonic_ifcs[i].rj.data(),
-                          PredType::IEEE_F64LE,
-                          Rj_dspace_m,
-                          Rj_dspace);
-
-            ++atoms_pos[0];
-            atoms_dspace.selectHyperslab(H5S_SELECT_SET, atoms_count, atoms_pos);
-            std::array<std::size_t,3> atoms_ = {anharmonic_ifcs[i].i, anharmonic_ifcs[i].j, anharmonic_ifcs[i].k};
-            atoms_dset.write(atoms_.data(),
-                             PredType::NATIVE_SIZE_T,
-                             atoms_dspace_m,
-                             atoms_dspace);
-
-            ++aifcs_pos[0];
-            aifcs_dspace.selectHyperslab(H5S_SELECT_SET, aifcs_count, aifcs_pos);
-            aifcs_dset.write(&(anharmonic_ifcs[i].ifc(0,0,0)),
-                             PredType::IEEE_F64LE,
-                             aifcs_dspace_m,
-                             aifcs_dspace);
-        }
-
-    }
-    comm.barrier();
-
+    });
 }
 
 void load_ifcs_subgroup(const char* filename,
-                         Harmonic_ifcs& harmonic_ifcs,
-                         std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
-                         const boost::mpi::communicator& comm) {
-    
-    auto my_id = comm.rank();
-
-    // Processes other than ID 0 do not do anything other than wait.
-    if (my_id == 0) {
-        std::unique_ptr<H5File> h5f;
-        h5f = alma::make_unique<H5File>(filename, H5F_ACC_RDWR);
-
-        
-        DataSet nsupercell_dset = h5f->openDataSet("/ifcs/harmonic/supercell");
-        DataSpace nsupercell_dspace = nsupercell_dset.getSpace();
-        DataSet positions_dset = h5f->openDataSet("/ifcs/harmonic/Rj");
-        DataSpace positions_dspace = positions_dset.getSpace();
-        DataSet hifcs_dset = h5f->openDataSet("/ifcs/harmonic/force_constants");
-        DataSpace hifcs_dspace = hifcs_dset.getSpace();
-
-        /// Get the number of harmonic components
-        hsize_t hsizes[2];
-        hifcs_dspace.getSimpleExtentDims(hsizes, nullptr);
-        std::size_t nharm = hsizes[0];
-        std::size_t ndof  = std::sqrt(hsizes[1]);
-        
-        /// Get the number of supercells
-        int n_supercell[3];
-        nsupercell_dspace.selectAll();
-        nsupercell_dset.read(n_supercell, PredType::NATIVE_INT, nsupercell_dspace, nsupercell_dspace);
-
-
-        std::vector<Eigen::MatrixXd> ifcs_(nharm, Eigen::MatrixXd::Zero(ndof,ndof));
-        std::vector<Triple_int> pos_(nharm);
-
-        hsize_t positions_pos[] = {0, 0};
-        hsize_t positions_count[] = {1, 3};
-        hsize_t positions_dims_m[] = {3};
-        DataSpace positions_dspace_m(1, positions_dims_m);
-
-        hsize_t hifcs_pos[] = {0, 0};
-        hsize_t hifcs_count[] = {1, ndof*ndof};
-        hsize_t hifcs_dims_m[] = {ndof*ndof};
-        DataSpace hifcs_dspace_m(1, hifcs_dims_m);
-
-        // Read the IFCs
-        for (std::size_t i = 0; i < nharm; i++) {
-            ++positions_pos[0];
-            positions_dspace.selectHyperslab(H5S_SELECT_SET, positions_count, positions_pos);
-            positions_dset.read(pos_[i].data(),
-                                 PredType::NATIVE_INT,
-                                 positions_dspace_m,
-                                 positions_dspace);
-            ++hifcs_pos[0];
-            hifcs_dspace.selectHyperslab(H5S_SELECT_SET, hifcs_count, hifcs_pos);
-            hifcs_dset.read(ifcs_[i].data(),
-                             PredType::IEEE_F64LE,
-                             hifcs_dspace_m,
-                             hifcs_dspace);
+                        Harmonic_ifcs& harmonic,
+                        std::vector<Thirdorder_ifcs>& anharmonic,
+                        const boost::mpi::communicator& comm) {
+    root_action(comm, [&] {
+        H5File file(filename, H5F_ACC_RDONLY);
+        require_dimensions(file, "/ifcs/harmonic/supercell", {3});
+        const auto supercell = read_column<int>(
+            file, "/ifcs/harmonic/supercell", 0, 3, PredType::NATIVE_INT);
+        if (std::min({supercell[0], supercell[1], supercell[2]}) <= 0)
+            throw input_error("invalid IFC supercell");
+        auto values = file.openDataSet("/ifcs/harmonic/force_constants");
+        auto shape = dimensions(values);
+        if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0)
+            throw input_error("invalid harmonic IFC dimensions");
+        checked_size(shape);
+        const hsize_t d =
+            static_cast<hsize_t>(std::sqrt(static_cast<double>(shape[1])));
+        if (d * d != shape[1] || d % 3)
+            throw input_error(
+                "harmonic IFC matrix must be square with 3N rows");
+        require_dimensions(file, "/ifcs/harmonic/Rj", {shape[0], 3});
+        auto positions = file.openDataSet("/ifcs/harmonic/Rj");
+        harmonic.na = supercell[0];
+        harmonic.nb = supercell[1];
+        harmonic.nc = supercell[2];
+        harmonic.pos.resize(shape[0]);
+        harmonic.ifcs.resize(shape[0]);
+        for (hsize_t k = 0; k < shape[0]; ++k) {
+            harmonic.ifcs[k].resize(d, d);
+            transfer_slice(positions,
+                           false,
+                           PredType::NATIVE_INT,
+                           harmonic.pos[k].data(),
+                           {k, 0},
+                           {1, 3});
+            transfer_slice(values,
+                           false,
+                           PredType::NATIVE_DOUBLE,
+                           harmonic.ifcs[k].data(),
+                           {k, 0},
+                           {1, d * d});
+            if (!harmonic.ifcs[k].allFinite())
+                throw input_error("nonfinite harmonic IFC");
         }
-
-        harmonic_ifcs.na = n_supercell[0];
-        harmonic_ifcs.nb = n_supercell[1];
-        harmonic_ifcs.nc = n_supercell[2];
-        harmonic_ifcs.pos.swap(pos_);
-        harmonic_ifcs.ifcs.swap(ifcs_);
-
-        /// Anharmonic ifcs
-        DataSet Rj_dset = h5f->openDataSet("/ifcs/anharmonic/Rj");
-        DataSpace Rj_dspace = Rj_dset.getSpace();
-        DataSet Rk_dset = h5f->openDataSet("/ifcs/anharmonic/Rk");
-        DataSpace Rk_dspace = Rk_dset.getSpace();
-        DataSet atoms_dset = h5f->openDataSet("/ifcs/anharmonic/atoms");
-        DataSpace atoms_dspace = atoms_dset.getSpace();
-        DataSet aifcs_dset = h5f->openDataSet("/ifcs/harmonic/force_constants");
-        DataSpace aifcs_dspace = aifcs_dset.getSpace();
-
-        /// Get the number of anharmonic components
-        hsize_t asizes[2];
-        Rj_dspace.getSimpleExtentDims(asizes, nullptr);
-        std::size_t nanharm = hsizes[0];
-
-        anharmonic_ifcs.clear();
-        anharmonic_ifcs.reserve(nanharm);
-
-        hsize_t Rk_pos[] = {0, 0};
-        hsize_t Rk_count[] = {1, 3};
-        hsize_t Rk_dims_m[] = {3};
-        DataSpace Rk_dspace_m(1, Rk_dims_m);
-        hsize_t Rj_pos[] = {0, 0};
-        hsize_t Rj_count[] = {1, 3};
-        hsize_t Rj_dims_m[] = {3};
-        DataSpace Rj_dspace_m(1, Rj_dims_m);
-        hsize_t atoms_pos[] = {0, 0};
-        hsize_t atoms_count[] = {1, 3};
-        hsize_t atoms_dims_m[] = {3};
-        DataSpace atoms_dspace_m(1, atoms_dims_m);
-
-        hsize_t aifcs_pos[] = {0, 0};
-        hsize_t aifcs_count[] = {1, 27};
-        hsize_t aifcs_dims_m[] = {27};
-        DataSpace aifcs_dspace_m(1, aifcs_dims_m);
-
-
-
-        for (std::size_t i = 0; i < nanharm; i++) {
-
-            Eigen::Vector3d Rk, Rj;
-
-            ++Rk_pos[0];
-            Rk_dspace.selectHyperslab(H5S_SELECT_SET, Rk_count, Rk_pos);
-            Rk_dset.read(Rk.data(),
-                          PredType::IEEE_F64LE,
-                          Rk_dspace_m,
-                          Rk_dspace);
-            ++Rj_pos[0];
-            Rj_dspace.selectHyperslab(H5S_SELECT_SET, Rj_count, Rj_pos);
-            Rj_dset.read(Rj.data(),
-                          PredType::IEEE_F64LE,
-                          Rj_dspace_m,
-                          Rj_dspace);
-
-            ++atoms_pos[0];
-            atoms_dspace.selectHyperslab(H5S_SELECT_SET, atoms_count, atoms_pos);
-            std::array<std::size_t,3> atoms_;
-            atoms_dset.read(atoms_.data(),
-                             PredType::NATIVE_SIZE_T,
-                             atoms_dspace_m,
-                             atoms_dspace);
-
-            ++aifcs_pos[0];
-            std::array<double,27> ifcs_;
-            aifcs_dspace.selectHyperslab(H5S_SELECT_SET, aifcs_count, aifcs_pos);
-            aifcs_dset.read(ifcs_.data(),
-                            PredType::IEEE_F64LE,
-                            aifcs_dspace_m,
-                            aifcs_dspace);
-
-            anharmonic_ifcs.emplace_back(Rj,Rk,atoms_[0],atoms_[1],atoms_[2]);
-            anharmonic_ifcs[i].swap_block(ifcs_);
+        auto thirds = file.openDataSet("/ifcs/anharmonic/force_constants");
+        shape = dimensions(thirds);
+        if (shape.size() != 2 || shape[1] != 27)
+            throw input_error("invalid anharmonic IFC dimensions");
+        checked_size(shape);
+        for (const auto name : {"/ifcs/anharmonic/Rj",
+                                "/ifcs/anharmonic/Rk",
+                                "/ifcs/anharmonic/atoms"})
+            require_dimensions(file, name, {shape[0], 3});
+        auto rj = file.openDataSet("/ifcs/anharmonic/Rj"),
+             rk = file.openDataSet("/ifcs/anharmonic/Rk"),
+             atoms = file.openDataSet("/ifcs/anharmonic/atoms");
+        anharmonic.clear();
+        anharmonic.reserve(shape[0]);
+        for (hsize_t k = 0; k < shape[0]; ++k) {
+            Eigen::Vector3d j, l;
+            std::uint64_t indices[3];
+            std::array<double, 27> data;
+            transfer_slice(
+                rj, false, PredType::NATIVE_DOUBLE, j.data(), {k, 0}, {1, 3});
+            transfer_slice(
+                rk, false, PredType::NATIVE_DOUBLE, l.data(), {k, 0}, {1, 3});
+            transfer_slice(
+                atoms, false, PredType::NATIVE_UINT64, indices, {k, 0}, {1, 3});
+            transfer_slice(thirds,
+                           false,
+                           PredType::NATIVE_DOUBLE,
+                           data.data(),
+                           {k, 0},
+                           {1, 27});
+            if (!j.allFinite() || !l.allFinite() ||
+                std::max({indices[0], indices[1], indices[2]}) >= d / 3 ||
+                !std::all_of(data.begin(), data.end(), [](double x) {
+                    return std::isfinite(x);
+                }))
+                throw input_error("invalid third-order IFC data");
+            anharmonic.emplace_back(j, l, indices[0], indices[1], indices[2]);
+            anharmonic.back().swap_block(data);
         }
-
-    }
-    
-    boost::mpi::broadcast(comm, harmonic_ifcs, 0);
-    boost::mpi::broadcast(comm, anharmonic_ifcs, 0);
-
-    comm.barrier();
+    });
+    boost::mpi::broadcast(comm, harmonic, 0);
+    boost::mpi::broadcast(comm, anharmonic, 0);
 }
-
 } // namespace alma

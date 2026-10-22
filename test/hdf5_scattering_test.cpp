@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ TEST(hdf5_scattering_case, hdf5_scattering_test) {
         thirdorder_path.string().c_str(), *poscar);
 
     // Create a trivially small q point grid.
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 4, 4, 4);
 
     grid->enforce_asr();
@@ -56,13 +56,15 @@ TEST(hdf5_scattering_case, hdf5_scattering_test) {
     auto processes = alma::find_allowed_threeph(*grid, world, 0.1);
 
     // Precompute everything possible.
-    for (auto& p : processes) {
+    for (auto p : processes) {
         p.compute_gaussian();
         p.compute_vp2(*poscar, *grid, *thirdorder);
     }
 
     // Create a temporary file name to write the information.
-    auto h5fn = boost::filesystem::unique_path();
+    auto h5fn =
+        boost::filesystem::temp_directory_path() /
+        boost::filesystem::unique_path("prealma-scattering-%%%%-%%%%.h5");
     alma::save_bulk_hdf5(h5fn.string().c_str(),
                          "Si test",
                          *poscar,

@@ -1,4 +1,5 @@
-// Copyright 2015 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -67,8 +68,8 @@ int main(int argc, char** argv) {
 
     if (rank == master) {
         std::cout << "***********************************" << std::endl;
-        std::cout << "This is ALMA/phononinfo version " << ALMA_VERSION_MAJOR << "."
-                << ALMA_VERSION_MINOR << std::endl;
+        std::cout << "This is ALMA/phononinfo version " << ALMA_VERSION_MAJOR
+                  << "." << ALMA_VERSION_MINOR << std::endl;
         std::cout << "***********************************" << std::endl;
         std::cout << "-Temperature : " << Tambient << " [K]" << std::endl;
     }
@@ -80,7 +81,8 @@ int main(int argc, char** argv) {
     std::string output_file = output_file_builder.str();
 
     // Obtain phonon data
-    if (rank == master) std::cout << "Reading " << h5filename << std::endl;
+    if (rank == master)
+        std::cout << "Reading " << h5filename << std::endl;
 
     if (!(boost::filesystem::exists(hdf5_path))) {
         std::cout << "ERROR:" << std::endl;
@@ -96,7 +98,8 @@ int main(int argc, char** argv) {
     auto processes = std::move(std::get<4>(hdf5_data));
 
     // RTA scattering rates at the specified temperature.
-    if (rank == master) std::cout << "Calculating scattering rates" << std::endl;
+    if (rank == master)
+        std::cout << "Calculating scattering rates" << std::endl;
     Eigen::ArrayXXd w3(
         alma::calc_w0_threeph(*grid, *processes, Tambient, world));
     auto twoph_processes = alma::find_allowed_twoph(*grid, world);
@@ -105,13 +108,24 @@ int main(int argc, char** argv) {
     Eigen::ArrayXXd w0(w3 + w2);
 
     // Phase space and weighted phase space at the specified temperature
-    if (rank == master) std::cout << "Calculating phase space and weighted phase space" << std::endl;
+    if (rank == master)
+        std::cout << "Calculating phase space and weighted phase space"
+                  << std::endl;
     Eigen::MatrixXd P3plus, P3minus, WP3plus, WP3minus;
-    auto phase_space = alma::calc_phase_space(*poscar, *grid, Tambient,
-                            *processes, P3plus, P3minus, WP3plus, WP3minus, world);
+    auto phase_space = alma::calc_phase_space(*poscar,
+                                              *grid,
+                                              Tambient,
+                                              *processes,
+                                              P3plus,
+                                              P3minus,
+                                              WP3plus,
+                                              WP3minus,
+                                              world);
 
 
-    if (rank == master) std::cout << "Calculation the small grain thermal conductivity" << std::endl;
+    if (rank == master)
+        std::cout << "Calculation the small grain thermal conductivity"
+                  << std::endl;
     auto kappa_sg = calc_kappa_sg(*poscar, *grid, *syms, Tambient);
 
     /// Master process prints the results
@@ -121,10 +135,10 @@ int main(int argc, char** argv) {
         std::ofstream filewriter;
         filewriter.open(output_file);
         filewriter << "nq,nbranch,qa[-],qb[-],qc[-],omega[rad/s],C[J/"
-                    "m^3-K],tau[s],vx[m/s],vy[m/s],vz[m/s],"
-                    "P3minus[ps/rad],P3plus[ps/rad],"
-                    "WP3minus[ps^{4}/rad^{4}],WP3plus[ps^{4}/rad^{4}]"
-                << std::endl;
+                      "m^3-K],tau[s],vx[m/s],vy[m/s],vz[m/s],"
+                      "P3minus[ps/rad],P3plus[ps/rad],"
+                      "WP3minus[ps^{4}/rad^{4}],WP3plus[ps^{4}/rad^{4}]"
+                   << std::endl;
 
         int Nq = grid->nqpoints;
         int Nbranches = grid->get_spectrum_at_q(0).omega.size();
@@ -154,28 +168,32 @@ int main(int argc, char** argv) {
                 double omega = 1e12 * sp.omega[nbranch];
 
                 // volumetric heat capacity [J/m^3-K]
-                double C = prefactor *
-                        alma::bose_einstein_kernel(sp.omega[nbranch], Tambient);
+                double C = prefactor * alma::bose_einstein_kernel(
+                                           sp.omega[nbranch], Tambient);
 
                 // group velocity vector [m/s]
                 Eigen::Vector3d vg_vector = 1e3 * sp.vg.col(nbranch);
 
                 // write output
-                filewriter << nq << "," << nbranch << "," << qa << "," << qb << ","
-                        << qc << ",";
+                filewriter << nq << "," << nbranch << "," << qa << "," << qb
+                           << "," << qc << ",";
                 filewriter << omega << "," << C << "," << tau0 << ",";
                 filewriter << vg_vector(0) << "," << vg_vector(1) << ","
-                        << vg_vector(2) << "," << P3minus(nbranch,nq) << ","
-                        << P3plus(nbranch,nq) << "," << WP3minus(nbranch,nq) << ","
-                        << WP3plus(nbranch,nq) << std::endl;
+                           << vg_vector(2) << "," << P3minus(nbranch, nq) << ","
+                           << P3plus(nbranch, nq) << ","
+                           << WP3minus(nbranch, nq) << ","
+                           << WP3plus(nbranch, nq) << std::endl;
             }
         }
 
         filewriter.close();
 
-        std::cout << "-Total phase space : " << phase_space.first  << " [ps/rad]" << std::endl;
-        std::cout << "-Total phase space : " << phase_space.second << " [ps^{4}/rad^{4}]" << std::endl;
-        std::cout << "-Small-grain thermal conductivity tensor [W / (m K nm)]:" << std::endl;
+        std::cout << "-Total phase space : " << phase_space.first << " [ps/rad]"
+                  << std::endl;
+        std::cout << "-Total phase space : " << phase_space.second
+                  << " [ps^{4}/rad^{4}]" << std::endl;
+        std::cout << "-Small-grain thermal conductivity tensor [W / (m K nm)]:"
+                  << std::endl;
         std::cout << kappa_sg << std::endl;
         std::cout << std::endl << "[DONE.]" << std::endl;
     }

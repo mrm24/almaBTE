@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -182,7 +183,8 @@ TEST(conductivity_value_case, superlattice_builder_test) {
     Eigen::ArrayXXd w_elastic = w0_SLbarriers.array() + w0_SLdisorder.array();
     Eigen::ArrayXXd w3(alma::calc_w0_threeph(*grid, *processes, Tref, world));
     Eigen::ArrayXXd w(w3 + w_elastic);
-    Eigen::Matrix3d kappa_RTA = alma::calc_kappa(*poscar, *grid, *syms, w, Tref);
+    Eigen::Matrix3d kappa_RTA =
+        alma::calc_kappa(*poscar, *grid, *syms, w, Tref);
 
     constexpr double kappa_target = 2.79990804;
     EXPECT_NEAR(kappa_RTA(2, 2), kappa_target, 5e-3 * kappa_target);

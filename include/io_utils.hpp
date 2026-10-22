@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.

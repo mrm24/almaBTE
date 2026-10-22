@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,6 +46,8 @@ private:
     /// Value of the intermediate quantity F, measuring the distance to
     /// equilibrium, for the current iteration.
     Eigen::MatrixXd F;
+    std::unique_ptr<Threeph_collision> threeph_collision;
+    double prepared_temperature;
     /// MPI communicator used to coordinate different processes.
     const boost::mpi::communicator& comm;
 
@@ -62,7 +64,7 @@ public:
     ShengBTE_iterator(const Crystal_structure& poscar,
                       const Gamma_grid& grid,
                       const Symmetry_operations& syms,
-                      std::vector<Threeph_process>& threeph_procs,
+                      Threeph_processes& threeph_procs,
                       std::vector<Twoph_process>& twoph_procs,
                       double T,
                       const boost::mpi::communicator& comm_);
@@ -79,7 +81,7 @@ public:
     void next(const Crystal_structure& poscar,
               const Gamma_grid& grid,
               const Symmetry_operations& syms,
-              std::vector<Threeph_process>& threeph_procs,
+              Threeph_processes& threeph_procs,
               std::vector<Twoph_process>& twoph_procs,
               double T);
 
@@ -176,7 +178,7 @@ Eigen::MatrixXd calc_shengbte_kappa(
     const alma::Crystal_structure& poscar,
     const alma::Gamma_grid& grid,
     const alma::Symmetry_operations& syms,
-    std::vector<alma::Threeph_process>& threeph_procs,
+    alma::Threeph_processes& threeph_procs,
     std::vector<alma::Twoph_process>& twoph_procs,
     double T,
     const boost::mpi::communicator& comm,

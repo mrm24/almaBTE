@@ -1,4 +1,4 @@
-! Copyright 2015-2018 The ALMA Project Developers
+! Copyright 2015-2026 The ALMA Project Developers
 !
 ! Licensed under the Apache License, Version 2.0 (the "License");
 ! you may not use this file except in compliance with the License.
@@ -204,7 +204,7 @@ contains
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
     real(kind=c_double) :: masses(allocs%nelements)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: epsilon(3, 3)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
@@ -242,7 +242,7 @@ contains
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
     real(kind=c_double) :: masses(allocs%nelements)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
       masses, gfactors, epsilon, born, scell, orientations
@@ -277,7 +277,7 @@ contains
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
     real(kind=c_double) :: masses(allocs%nelements)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
       masses, gfactors, epsilon, born, scell, orientations
@@ -314,7 +314,7 @@ contains
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
     real(kind=c_double) :: masses(allocs%nelements)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: epsilon(3, 3)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
@@ -352,7 +352,7 @@ contains
     integer(kind=c_int), allocatable :: orientations(:, :)
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: epsilon(3, 3)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
@@ -378,7 +378,7 @@ contains
     implicit none
 
     type(sheng_allocations) :: allocs
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     integer(kind=c_int) :: na
     integer(kind=c_int) :: nb
     integer(kind=c_int) :: nc
@@ -425,7 +425,7 @@ contains
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
     real(kind=c_double) :: masses(allocs%nelements)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: epsilon(3, 3)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
@@ -461,7 +461,7 @@ contains
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
     real(kind=c_double) :: masses(allocs%nelements)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: epsilon(3, 3)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
@@ -498,7 +498,7 @@ contains
     integer(kind=c_int) :: scell(3)
     real(kind=c_double) :: positions(3, allocs%natoms)
     real(kind=c_double) :: masses(allocs%nelements)
-    real(kind=c_double) :: gfactors(allocs%natoms)
+    real(kind=c_double) :: gfactors(allocs%nelements)
     real(kind=c_double) :: epsilon(3, 3)
     real(kind=c_double) :: born(3, 3, allocs%natoms)
     namelist /crystal/ lfactor, lattvec, elements, types, positions, &
@@ -509,7 +509,7 @@ contains
     if (allocs%norientations .ne. 0) then
       allocate(orientations(3, allocs%norientations))
     end if
-    do i=1, allocs%natoms
+    do i=1, allocs%nelements
       elements(i) = ""
     end do
     open(1, file="CONTROL", status="old")

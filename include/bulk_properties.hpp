@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,12 +60,12 @@ inline double calc_cv(const alma::Crystal_structure& poscar,
 /// @return the thermal conductivity tensor in SI units
 Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
                            const alma::Gamma_grid& grid,
-			   const alma::Symmetry_operations& syms,
+                           const alma::Symmetry_operations& syms,
                            const Eigen::Ref<const Eigen::ArrayXXd>& w,
                            double T);
 
 /// Obtain the coherence term to the thermal conductivity
-/// See 10.1103/PhysRevX.12.041011 
+/// See 10.1103/PhysRevX.12.041011
 ///
 /// @param[in] poscar - description of the unit cell
 /// @param[in] grid - phonon spectrum on a regular q-point grid
@@ -118,56 +119,55 @@ double calc_kappa_1d(const alma::Crystal_structure& poscar,
 /// @param[in] grid - phonon spectrum on a regular q-point grid
 /// @param[in] T - temperature in K
 /// @param[in] processes  - three-phonon procesess
-/// @param[out] P3plus    - contains the mode-resolve absorption phase space in ps/rad
-/// @param[out] P3minus   - contains the mode-resolve emission phase space in ps/rad
-/// @param[out] WP3plus   - contains the mode-resolve weighted absorption phase space in ps^{4}/rad^{4}
-/// @param[out] WP3minus  - contains the mode-resolve weighted emission phase space in ps^{4}/rad^{4} 
+/// @param[out] P3plus    - contains the mode-resolve absorption phase space in
+/// ps/rad
+/// @param[out] P3minus   - contains the mode-resolve emission phase space in
+/// ps/rad
+/// @param[out] WP3plus   - contains the mode-resolve weighted absorption phase
+/// space in ps^{4}/rad^{4}
+/// @param[out] WP3minus  - contains the mode-resolve weighted emission phase
+/// space in ps^{4}/rad^{4}
 /// @param[in]  world     - the mpi communicator
-/// @return pair containing the total phase space (ps/rad) and the total weighted phase space (ps^{4}/rad^{4}) respectively
-std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
-                                          const alma::Gamma_grid& grid,
-                                          const double T,
-                                          std::vector<alma::Threeph_process>& processes,
-                                          Eigen::MatrixXd& P3plus,
-                                          Eigen::MatrixXd& P3minus,
-                                          Eigen::MatrixXd& WP3plus,
-                                          Eigen::MatrixXd& WP3minus,
-                                          const boost::mpi::communicator& world);
-
-/// Obtain the averaged three-phonon matrix element
-///
-/// @param[in] poscar - description of the unit cell
-/// @param[in] grid - phonon spectrum on a regular q-point grid
-/// @param[in] T - temperature in K
-/// @param[in] processes  - three-phonon procesess
-/// @param[out] P3plus    - contains the mode-resolve absorption phase space in ps/rad
-/// @param[out] P3minus   - contains the mode-resolve emission phase space in ps/rad
-/// @param[out] WP3plus   - contains the mode-resolve weighted absorption phase space in ps^{4}/rad^{4}
-/// @param[out] WP3minus  - contains the mode-resolve weighted emission phase space in ps^{4}/rad^{4}
-/// @param[in]  world     - the mpi communicator
-/// @return pair containing the total phase space (ps/rad) and the total weighted phase space (ps^{4}/rad^{4}) respectively
-std::pair<double,double> calc_phase_space(const alma::Crystal_structure& poscar,
-                                          const alma::Gamma_grid& grid,
-                                          const double T,
-                                          std::vector<alma::Threeph_process>& processes,
-                                          Eigen::MatrixXd& P3plus,
-                                          Eigen::MatrixXd& P3minus,
-                                          Eigen::MatrixXd& WP3plus,
-                                          Eigen::MatrixXd& WP3minus,
-                                          const boost::mpi::communicator& world);
+/// @return pair containing the total phase space (ps/rad) and the total
+/// weighted phase space (ps^{4}/rad^{4}) respectively
+std::pair<double, double> calc_phase_space(
+    const alma::Crystal_structure& poscar,
+    const alma::Gamma_grid& grid,
+    const double T,
+    alma::Threeph_processes& processes,
+    Eigen::MatrixXd& P3plus,
+    Eigen::MatrixXd& P3minus,
+    Eigen::MatrixXd& WP3plus,
+    Eigen::MatrixXd& WP3minus,
+    const boost::mpi::communicator& world);
 
 /// Returns the mean of the energy allowed three-phonon processes
 ///
 /// @param[in] poscar - description of the unit cell
 /// @param[in] grid - phonon spectrum on a regular q-point grid
 /// @param[in] processes  - three-phonon procesess
-/// @param[out] vp2plus   - contains the mode-resolve mean of the allowed procesess
+/// @param[out] vp2plus   - contains the mode-resolve mean of the allowed
+/// procesess
 /// @param[in]  world     - the mpi communicator
 /// @return the mean of the three-phonon matrix elements
 double calc_anharmonicity(const alma::Crystal_structure& poscar,
                           const alma::Gamma_grid& grid,
-                          std::vector<alma::Threeph_process>& processes,
+                          alma::Threeph_processes& processes,
                           Eigen::MatrixXd& vp2,
                           const boost::mpi::communicator& world);
 
+// Source-compatible convenience overloads apply the crystal's symmetry.
+inline Eigen::MatrixXd calc_kappa(
+    const Crystal_structure& cell,
+    const Gamma_grid& grid,
+    const Eigen::Ref<const Eigen::ArrayXXd>& rates,
+    double temperature) {
+    return calc_kappa(
+        cell, grid, Symmetry_operations(cell), rates, temperature);
+}
+inline Eigen::MatrixXd calc_kappa_sg(const Crystal_structure& cell,
+                                     const Gamma_grid& grid,
+                                     double temperature) {
+    return calc_kappa_sg(cell, grid, Symmetry_operations(cell), temperature);
+}
 } // namespace alma

@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -49,7 +50,9 @@ constexpr double hbar = 1.054571726e-34;
 /// Speed of light in vacuum, m/s.
 constexpr double c = 299792458.;
 /// Rydberg constant in m^{-1}
-constexpr double Rydberg = me * boost::math::pow<4>(e) / (8.0 * boost::math::pow<2>(epsilon0) * boost::math::pow<3>(h) * c);
+constexpr double Rydberg =
+    me * boost::math::pow<4>(e) /
+    (8.0 * boost::math::pow<2>(epsilon0) * boost::math::pow<3>(h) * c);
 /// Rydberg unit of energy in J
 constexpr double Rydberg_energy = h * c * Rydberg;
 /// Value of pi (to 128 bits)

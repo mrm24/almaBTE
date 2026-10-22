@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -159,8 +159,7 @@ private:
     std::vector<std::unique_ptr<alma::Gamma_grid>> material_grid;
     /// Vector of structures containing information about allowed three-phonon
     /// processes in each structure.
-    std::vector<std::unique_ptr<std::vector<alma::Threeph_process>>>
-        material_processes;
+    std::vector<std::unique_ptr<alma::Threeph_processes>> material_processes;
     /// 1D thermal transport axis
     Eigen::Vector3d u;
     /// Material making up each layer in the structure.
@@ -1046,7 +1045,7 @@ public:
 
             if (choice < p_top) { // Particle emitted from the top.
                 auto mode = dist_top.sample();
-                particle = alma::make_unique<alma::D_particle>(
+                particle = std::make_unique<alma::D_particle>(
                     Eigen::Vector3d(0., 0., layer_top.front()),
                     mode[1],
                     mode[0],
@@ -1058,7 +1057,7 @@ public:
             }
             else { // Particle emitted from the bottom.
                 auto mode = dist_bottom.sample();
-                particle = alma::make_unique<alma::D_particle>(
+                particle = std::make_unique<alma::D_particle>(
                     Eigen::Vector3d(0., 0., layer_bottom.back()),
                     mode[1],
                     mode[0],

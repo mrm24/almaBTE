@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,6 +39,7 @@ namespace alma {
 class Symmetry_operations;
 class Gamma_grid;
 class Threeph_process;
+class Threeph_processes;
 
 /// Convenient shorthand for an array of three ints.
 using Triple_int = std::array<int, 3>;
@@ -264,6 +266,7 @@ public:
     inline std::vector<std::string>::size_type get_ncells() const {
         return this->pos.size();
     }
+
 private:
     friend class boost::serialization::access;
     /// Serialize the data needed to reconstruct an
@@ -272,9 +275,8 @@ private:
     /// @param[in,out] ar - an output archive
     /// @param[in] version - version number used
     /// internally by boost::serialization
-    template<class Archive>
-    void serialize(Archive & ar, const unsigned int version)
-    {
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
         ar & pos;
         ar & ifcs;
         ar & na;
@@ -440,7 +442,7 @@ public:
     }
 
     /// Swap the ifcs from a given array to the class ones
-    /// @param[inout] ifcs_ - ifcs to copy 
+    /// @param[inout] ifcs_ - ifcs to copy
     void swap_block(std::array<double, 27>& ifcs_) {
         std::swap(this->ifcs, ifcs_);
     }
@@ -456,9 +458,8 @@ private:
     /// @param[in,out] ar - an output archive
     /// @param[in] version - version number used
     /// internally by boost::serialization
-    template<class Archive>
-    void serialize(Archive & ar, const unsigned int version)
-    {
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
         ar & rj;
         ar & rk;
         ar & i;

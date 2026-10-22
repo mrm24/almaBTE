@@ -1,0 +1,6 @@
+.gitattributes export-ignore
+.gitignore export-ignore
+.clang-format export-ignore
+
+# Preserve upstream formatting in the vendored Eigen snapshot.
+external/eigen/** -whitespace

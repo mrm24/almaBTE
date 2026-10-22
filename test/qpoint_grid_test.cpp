@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ TEST(qpoint_grid_case, qpoint_grid_test) {
     auto force_constants =
         alma::load_FORCE_CONSTANTS(ifc_path.string().c_str(), *poscar, 5, 5, 5);
 
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 5, 5, 5);
 
     grid->enforce_asr();
@@ -51,13 +51,13 @@ TEST(qpoint_grid_case, qpoint_grid_test) {
     for (std::size_t i = 0; i < grid->get_nequivalences(); ++i)
         EXPECT_EQ(reference[i], grid->get_cardinal(i));
 
-    grid = alma::make_unique<alma::Gamma_grid>(
+    grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 5, 5, 3);
     grid->enforce_asr();
     EXPECT_EQ(75u, grid->nqpoints);
     EXPECT_EQ(24u, grid->get_nequivalences());
 
-    grid = alma::make_unique<alma::Gamma_grid>(
+    grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 8, 5, 3);
     grid->enforce_asr();
     EXPECT_EQ(120u, grid->nqpoints);

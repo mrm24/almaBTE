@@ -1,11 +1,21 @@
-# Standard boilerplate.
-cmake_minimum_required(VERSION 3.27.0 FATAL_ERROR)
+# Match the minimum required by the optional spglib 2.7 download.
+cmake_minimum_required(VERSION 3.25)
 project(ALMA CXX C)
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
-# Assume C++17 for all C++ source,
-# and require compiler support.
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED on)
+# Use C++17 for the integrated code. Allow toolchains and callers to
+# request a newer standard without silently overriding their choice.
+set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard (at least 17)")
+if(CMAKE_CXX_STANDARD LESS 17)
+  message(FATAL_ERROR "ALMA and its Boost dependencies require C++17 or newer")
+endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Keep optimized builds with debug symbols as the default, while respecting
+# explicit build types and the flags supplied by the user or toolchain.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
 
 # Try to find a suitable Fortran compiler to build the ShengBTE emulator.
 # If it is not found, the target is skipped.
@@ -13,19 +23,18 @@ include(CheckLanguage)
 check_language(Fortran)
 if(CMAKE_Fortran_COMPILER)
   enable_language(Fortran)
-  string(CONCAT CMAKE_Fortran_FLAGS "-O2")
   include(FortranCInterface)
   FortranCInterface_VERIFY(QUIET)
   FortranCInterface_VERIFY(CXX QUIET)
   if(FortranCInterface_VERIFIED_C AND FortranCInterface_VERIFIED_CXX)
-    set(BUILD_SHENGBTEPP TRUE CACHED INTERNAL "Create the shengbtepp target?")
+    set(BUILD_SHENGBTEPP TRUE)
   else()
     message("Fortran compiler not compatible with C/C++ compilers, the shengbtepp target will not be available")
-    set(BUILD_SHENGBTEPP FALSE CACHED INTERNAL "Create the shengbtepp target?")
+    set(BUILD_SHENGBTEPP FALSE)
   endif()
 else()
   message("Fortran compiler not found, the shengbtepp target will not be available")
-  set(BUILD_SHENGBTEPP FALSE CACHED INTERNAL "Create the shengbtepp target?")
+  set(BUILD_SHENGBTEPP FALSE)
 endif()
 
 # Try to find a threading library. Superfluous in most systems,
@@ -33,63 +42,30 @@ endif()
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
-
-# Try to associate an HDF5 type to std::size_t.
-include(CheckTypeSize)
-set(CMAKE_EXTRA_INCLUDE_FILES "cstddef")
-check_type_size("std::size_t" ALMA_SIZEOF_SIZE_T LANGUAGE CXX)
-set(CMAKE_EXTRA_INCLUDE_FILES)
-if ("${ALMA_SIZEOF_SIZE_T}" STREQUAL "")
-  message(FATAL_ERROR "Cannot evaluate the size of std::size_t")
+option(ALMA_OPENMP "Enable OpenMP threading" ON)
+if(ALMA_OPENMP)
+  find_package(OpenMP QUIET COMPONENTS CXX)
 endif()
-check_type_size("unsigned short" ALMA_SIZEOF_USHORT LANGUAGE CXX)
-check_type_size("unsigned int" ALMA_SIZEOF_UINT LANGUAGE CXX)
-check_type_size("unsigned long" ALMA_SIZEOF_ULONG LANGUAGE CXX)
-check_type_size("unsigned long long" ALMA_SIZEOF_ULLONG LANGUAGE CXX)
-if (${ALMA_SIZEOF_SIZE_T} EQUAL ${ALMA_SIZEOF_USHORT})
-  set(NATIVE_SIZE_T "NATIVE_USHORT")
-  message("std::size_t is unsigned short")
-elseif (${ALMA_SIZEOF_SIZE_T} EQUAL ${ALMA_SIZEOF_UINT})
-  set(NATIVE_SIZE_T "NATIVE_UINT")
-  message("std::size_t is unsigned int")
-elseif (${ALMA_SIZEOF_SIZE_T} EQUAL ${ALMA_SIZEOF_ULONG})
-  set(NATIVE_SIZE_T "NATIVE_ULONG")
-  message("std::size_t is unsigned long")
-elseif (${ALMA_SIZEOF_SIZE_T} EQUAL ${ALMA_SIZEOF_ULLONG})
-  set(NATIVE_SIZE_T "NATIVE_ULLONG")
-  message("std::size_t is unsigned long long")
-else (${ALMA_SIZEOF_SIZE_T} EQUAL ${ALMA_SIZEOF_USHORT})
-  message(FATAL_ERROR "Cannot find an HDF5 type for std::size_t")
-endif (${ALMA_SIZEOF_SIZE_T} EQUAL ${ALMA_SIZEOF_USHORT})
 
 # Do not use Eigen's parallel algorithms.
 add_definitions(-DEIGEN_DONT_PARALLELIZE)
 
 # Detect and set up MPI.
-find_package(MPI)
-if(NOT MPI_CXX_FOUND)
-  message(FATAL_ERROR "No MPI C++ compiler was found.")
-endif()
-include_directories(SYSTEM ${MPI_CXX_INCLUDE_PATH})
-string(CONCAT CMAKE_CXX_FLAGS ${MPI_CXX_COMPILE_FLAGS})
-string(CONCAT CMAKE_CXX_LINK_FLAGS ${MPI_CXX_LINK_FLAGS})
-
-# Detect OpenMP
-find_package(OpenMP REQUIRED) 
+find_package(MPI REQUIRED COMPONENTS CXX)
 
 # Compiler flags (currently only for g++ or clang++).
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS}")
-endif()
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    string(CONCAT CMAKE_CXX_FLAGS "-O3 -g -Wall ${OpenMP_CXX_FLAGS} -Wno-unused-local-typedef")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall>")
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-local-typedef>")
+  endif()
 endif()
 
 # Set up some variables so that they can be used in the code.
 set(ALMA_VERSION_MAJOR 1)
 set(ALMA_VERSION_MINOR 3)
 set(BULK_HDF5_MAJOR_VERSION 0)
-set(BULK_HDF5_MINOR_VERSION 2)
+set(BULK_HDF5_MINOR_VERSION 5)
 set(TEST_RESOURCE_DIR "${PROJECT_SOURCE_DIR}/test_resources")
 
 
@@ -100,72 +76,30 @@ include_directories("${PROJECT_BINARY_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/external/randutils")
 include_directories("${PROJECT_SOURCE_DIR}/external/base-n/include")
 
-# Find some components from Boost.
-if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.30")
-    find_package(Boost CONFIG REQUIRED COMPONENTS system filesystem mpi serialization log)
-    get_target_property(Boost_INCLUDE_DIR Boost::filesystem INTERFACE_INCLUDE_DIRECTORIES)
-    get_target_property(Boost_FILESYSTEM_LIB Boost::filesystem LOCATION)
-    get_filename_component(Boost_LIBRARY_DIR ${Boost_FILESYSTEM_LIB} DIRECTORY)
-else()
-    find_package(Boost REQUIRED COMPONENTS system filesystem mpi serialization log)
-endif()
-message(STATUS "Boost include directory: ${Boost_INCLUDE_DIR}")
-message(STATUS "Boost library directory: ${Boost_LIBRARY_DIR}")
-include_directories(${Boost_INCLUDE_DIR})
-link_directories(${Boost_LIBRARY_DIR})
-add_definitions(-DBOOST_LOG_DYN_LINK)
-set(Boost_USE_MULTITHREADED OFF)
+# Boost >= 1.75 supplies its CMake package and header-only Boost.System.
+find_package(Boost 1.75.0 CONFIG REQUIRED COMPONENTS filesystem mpi serialization log)
+find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
-# Check for Boost 1.58.0, which contains a bug that prevents compilation.
-if(Boost_MAJOR_VERSION EQUAL 1 AND Boost_MINOR_VERSION EQUAL 58)
-  message(FATAL_ERROR "Boost 1.58.0 found.
-This particular version is not compatible with ALMA due to a bug. See:
-http://stackoverflow.com/a/30437359/85371
-https://svn.boost.org/trac/boost/ticket/11342
-Please use an older or a newer version of Boost.
-")
-endif()
-
-# Try to find hdf5 in the system.
-find_package(HDF5 COMPONENTS C CXX REQUIRED)
-add_definitions(${HDF5_DEFINITIONS})
-include_directories(${HDF5_INCLUDE_DIRS})
-link_directories(${HDF5_LIBRARY_DIRS})
-set(HDF5_LIBS ${HDF5_C_LIBRARIES} ${HDF5_CXX_LIBRARIES})
-
-# Instruct CMake to compile spglib as an external project.
-include(ExternalProject)
-# For some reason the directory where spglib is extracted gets
-# renamed on some hosts, leading to a different path for the
-# configure script.
-set(SPGLIB_CONFIGURE_COMMAND1 configure)
-set(SPGLIB_CONFIGURE_COMMAND2 spglib-1.9.4/configure)
-ExternalProject_Add(
-  spglib
-  URL file://${PROJECT_SOURCE_DIR}/external/spglib-1.9.4.tar.gz
-  PREFIX external/spglib
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE  
-  CONFIGURE_COMMAND <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND1} --disable-shared --with-pic --enable-static --prefix=<INSTALL_DIR> || <SOURCE_DIR>/${SPGLIB_CONFIGURE_COMMAND2} ${SPGLIB_CONFIGURE_OPTIONS} --disable-shared --enable-static --prefix=<INSTALL_DIR>
-  BUILD_COMMAND make
-  INSTALL_COMMAND make install
-  BUILD_IN_SOURCE 1
-)
-# Make sure that the spglib headers and libraries are available.
-ExternalProject_Get_Property(spglib install_dir)
-include_directories(${install_dir}/include)
-link_directories(${install_dir}/lib)
-add_library(libsymspg STATIC IMPORTED)
-set_property(TARGET libsymspg PROPERTY IMPORTED_LOCATION ${install_dir}/lib/libsymspg.a)
-add_dependencies(libsymspg spglib)
+# Discover an installed spglib, or download a pinned release when requested.
+include(PrealmaSpglib)
 
 # Add the main source directory.
 add_subdirectory(src)
 
 # Set up Google Test and Google Mock.
-add_subdirectory(external/gmock-1.7.0)
+# Isolate the policy compatibility override needed by the bundled Google Mock
+# and Google Test when configuring with CMake 4 or newer.
+function(alma_add_gmock)
+  if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM OR
+      CMAKE_POLICY_VERSION_MINIMUM VERSION_LESS "3.10")
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+  endif()
+  add_subdirectory(external/gmock-1.7.0)
+endfunction()
+alma_add_gmock()
 enable_testing()
-include_directories(${gmock_SOURCE_DIR}/include)
-include_directories(${gmock_SOURCE_DIR}/gtest/include)
+include_directories("${PROJECT_SOURCE_DIR}/external/gmock-1.7.0/include")
+include_directories("${PROJECT_SOURCE_DIR}/external/gmock-1.7.0/gtest/include")
 
 # Add the directory containing the tests.
 add_subdirectory(test)

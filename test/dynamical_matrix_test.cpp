@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public:
             ifc_path.string().c_str(), *poscar, 5, 5, 5);
 
         ndof = 3 * poscar->get_natoms();
-        factory = alma::make_unique<alma::Dynamical_matrix_builder>(
+        factory = std::make_unique<alma::Dynamical_matrix_builder>(
             *poscar, syms, *force_constants);
     }
 };
@@ -106,8 +106,8 @@ public:
         auto born = alma::load_BORN(born_path.string().c_str());
 
         ndof = 3 * poscar->get_natoms();
-        factory = alma::make_unique<alma::Dynamical_matrix_builder>(
-            *poscar, syms, *force_constants, *born, alma::nonanalytic_treatment::wang);
+        factory = std::make_unique<alma::Dynamical_matrix_builder>(
+            *poscar, syms, *force_constants, *born);
     }
 };
 

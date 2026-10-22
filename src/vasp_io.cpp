@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -84,7 +85,7 @@ std::unique_ptr<Crystal_structure> load_POSCAR(const char* filename) {
 
     // Make sure that we store lattice coordinates.
     if (cartesian)
-        positions = lattvec.colPivHouseholderQr().solve(positions / 10.);
+        positions = lattvec.colPivHouseholderQr().solve(positions * factor);
 
     // The code expects direct coordinates to lie in the
     // [0.,1.) range.
@@ -96,7 +97,7 @@ std::unique_ptr<Crystal_structure> load_POSCAR(const char* filename) {
                 positions(j, i) += 1.;
         }
     // Build and return the object.
-    return alma::make_unique<Crystal_structure>(
+    return std::make_unique<Crystal_structure>(
         lattvec, positions, elements, numbers);
 }
 
@@ -127,38 +128,47 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
     std::getline(f, first_line);
     std::vector<int> fc_sizes = tokenize_homogeneous_line<int>(first_line);
 
+    if (fc_sizes.empty() || fc_sizes.size() > 2 ||
+        std::any_of(
+            fc_sizes.begin(), fc_sizes.end(), [](int n) { return n <= 0; }))
+        throw input_error("invalid FORCE_CONSTANTS header");
+
     if (fc_sizes.size() == 1) {
-	format = force_constants_format::old;
+        format = force_constants_format::old;
     }
     else if (fc_sizes.size() == 2 and fc_sizes[0] == fc_sizes[1]) {
-    	format = force_constants_format::new_full;
+        format = force_constants_format::new_full;
     }
     else if (fc_sizes.size() == 2 and fc_sizes[0] != fc_sizes[1]) {
         format = force_constants_format::new_compact;
     }
     else {
-	throw value_error("format of the FORCE_CONSTANTS is not recognized");
+        throw value_error("format of the FORCE_CONSTANTS is not recognized");
     }
 
-    std::array<int,2> ntot = {fc_sizes[0], fc_sizes[0]};
-    if ( format != force_constants_format::old) ntot[1] = fc_sizes[1];
+    std::array<int, 2> ntot = {fc_sizes[0], fc_sizes[0]};
+    if (format != force_constants_format::old)
+        ntot[1] = fc_sizes[1];
     auto natoms = cell.get_natoms();
     auto ndof = 3 * natoms;
     auto nexpected = na * nb * nc * natoms;
 
-    if (ntot[1] != nexpected)
-        throw value_error(boost::str(
-            boost::format("expected %1% atoms, got %2%") % nexpected % ntot[1]));
+    if (ntot[1] != nexpected ||
+        (format == force_constants_format::new_compact &&
+         ntot[0] != static_cast<int>(natoms)))
+        throw value_error(
+            boost::str(boost::format("expected %1% atoms, got %2%") %
+                       nexpected % ntot[1]));
     // Then comes one block for each atom pair.
     // This means that the file is either highly redundant or
     // inconsistent. Here we assume the former.
     int field;
     std::string line;
     Triple_int_map<Eigen::MatrixXd> matrices;
-    auto builder1 = format == force_constants_format::new_compact ? 
-	    	    Supercell_index_builder(1, 1, 1, ntot[0]) : 
-		    Supercell_index_builder(na, nb, nc, ntot[0]);
-    auto builder2 = Supercell_index_builder(na, nb, nc, ntot[1]);
+    auto builder1 = format == force_constants_format::new_compact
+                        ? Supercell_index_builder(1, 1, 1, ntot[0])
+                        : Supercell_index_builder(na, nb, nc, natoms);
+    auto builder2 = Supercell_index_builder(na, nb, nc, natoms);
 
     for (auto i = 0; i < ntot[0]; ++i) {
         for (auto j = 0; j < ntot[1]; ++j) {
@@ -201,7 +211,7 @@ std::unique_ptr<Harmonic_ifcs> load_FORCE_CONSTANTS(
     std::vector<Triple_int> pos;
     std::vector<Eigen::MatrixXd> ifcs;
     std::tie(pos, ifcs) = split_keys_and_values(matrices);
-    return alma::make_unique<Harmonic_ifcs>(pos, ifcs, na, nb, nc);
+    return std::make_unique<Harmonic_ifcs>(pos, ifcs, na, nb, nc);
 }
 
 
@@ -278,7 +288,7 @@ std::unique_ptr<Dielectric_parameters> load_BORN(const char* filename) {
             throw input_error("wrong number of fields in a line");
         }
     } while (!f.eof());
-    return alma::make_unique<Dielectric_parameters>(born, epsilon);
+    return std::make_unique<Dielectric_parameters>(born, epsilon);
 }
 
 
@@ -294,7 +304,7 @@ std::unique_ptr<std::vector<Thirdorder_ifcs>> load_FORCE_CONSTANTS_3RD(
     // The first line is the number of blocks in the file.
     std::size_t nblocks;
     f >> nblocks;
-    auto nruter = make_unique<std::vector<Thirdorder_ifcs>>();
+    auto nruter = std::make_unique<std::vector<Thirdorder_ifcs>>();
     nruter->reserve(nblocks);
 
     // For each block.

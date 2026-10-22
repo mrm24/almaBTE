@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -83,7 +84,8 @@ TEST(isotopic_scattering_case, si_isotopes_test) {
         if (my_id == 0) {
             auto kappa_pure =
                 alma::calc_kappa(*poscar, *grid, *syms, anharmonic_w0, T);
-            auto kappa_natural = alma::calc_kappa(*poscar, *grid, *syms, total_w0, T);
+            auto kappa_natural =
+                alma::calc_kappa(*poscar, *grid, *syms, total_w0, T);
 
             EXPECT_NEAR(
                 ref_pure[pos], kappa_pure(0, 0), 5e-3 * kappa_pure(0, 0));
@@ -128,7 +130,7 @@ TEST(isotopic_scattering_case, sige_test) {
         alma::vc_mix_thirdorder_ifcs({*si_thirdorder, *ge_thirdorder}, ratios);
 
     auto syms = alma::Symmetry_operations(*vc_poscar);
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *vc_poscar, syms, *vc_ifcs, 12, 12, 12);
     grid->enforce_asr();
 

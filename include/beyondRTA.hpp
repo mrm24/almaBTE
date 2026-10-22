@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -42,15 +42,14 @@ namespace beyondRTA {
 /// @param[in] T - temperature in K
 /// @param[in] iterative - use iterative Eigen solver for faster computation
 /// @return the thermal conductivity tensor in SI units
-Eigen::MatrixXd calc_kappa(
-    const alma::Crystal_structure& poscar,
-    const alma::Gamma_grid& grid,
-    const alma::Symmetry_operations& syms,
-    const std::vector<alma::Threeph_process>& threeph_procs,
-    const std::vector<alma::Twoph_process>& twoph_procs,
-    const Eigen::Ref<const Eigen::ArrayXXd>& w0,
-    double T,
-    bool iterative,
-    boost::mpi::communicator& world);
+Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
+                           const alma::Gamma_grid& grid,
+                           const alma::Symmetry_operations& syms,
+                           const alma::Threeph_processes& threeph_procs,
+                           const std::vector<alma::Twoph_process>& twoph_procs,
+                           const Eigen::Ref<const Eigen::ArrayXXd>& w0,
+                           double T,
+                           bool iterative,
+                           boost::mpi::communicator& world);
 } // namespace beyondRTA
 } // namespace alma

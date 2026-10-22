@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ TEST(proc_serialization_case, proc_serialization_test) {
     auto force_constants =
         alma::load_FORCE_CONSTANTS(ifc_path.string().c_str(), *poscar, 5, 5, 5);
 
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 12, 12, 12);
 
     grid->enforce_asr();

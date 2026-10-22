@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,14 +41,10 @@
 #include <unsupported/Eigen/Splines>
 
 namespace alma {
-/// Emulation of C++14's make_unique.
-template <typename T, typename... Args>
-std::unique_ptr<T> make_unique(Args&&... args) {
-    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
-}
-
 inline void string_to_lower(std::string& str) {
-    std::transform(str.begin(), str.end(), str.begin(),[](unsigned char c){return std::tolower(c);});
+    std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) {
+        return std::tolower(c);
+    });
 }
 
 /// Comparator function object template for a container of
@@ -374,8 +371,6 @@ inline std::string engineer_format(double x, bool insert_space = false) {
         {1e-15, 1e-12, 1e-9, 1e-6, 1e-3, 1.0, 1e3, 1e6, 1e9, 1e12, 1e15});
 
     std::stringstream result_builder;
-    constexpr auto max_precision{std::numeric_limits<double>::digits10 + 1};
-    result_builder << std::setprecision(max_precision);
 
     int idx =
         static_cast<int>(std::floor((std::log10(x) + 15.0) / (3.0 - 1e-12)));
@@ -510,9 +505,9 @@ namespace serialization {
 /// Allow boost to serialize an Eigen::Triplet.
 template <class Archive, typename S>
 void save(Archive& ar, const Eigen::Triplet<S>& t, const unsigned int version) {
-    ar& t.row();
-    ar& t.col();
-    ar& t.value();
+    ar & t.row();
+    ar & t.col();
+    ar & t.value();
 }
 
 
@@ -520,11 +515,11 @@ void save(Archive& ar, const Eigen::Triplet<S>& t, const unsigned int version) {
 template <class Archive, typename S>
 void load(Archive& ar, Eigen::Triplet<S>& t, const unsigned int version) {
     int row;
-    ar& row;
+    ar & row;
     int col;
-    ar& col;
+    ar & col;
     S value;
-    ar& value;
+    ar & value;
 
     t = Eigen::Triplet<S>(row, col, value);
 }
@@ -546,8 +541,8 @@ void serialize(Archive& ar,
     Eigen::MatrixXd::Index rows = t.rows();
     Eigen::MatrixXd::Index cols = t.cols();
 
-    ar& rows;
-    ar& cols;
+    ar & rows;
+    ar & cols;
     // Because our matrix is dynamic we need to ensure resizing
     if (rows * cols != t.size())
         t.resize(rows, cols);
@@ -562,8 +557,8 @@ void serialize(Archive& ar,
     Eigen::MatrixXd::Index rows = t.rows();
     Eigen::MatrixXd::Index cols = t.cols();
 
-    ar& rows;
-    ar& cols;
+    ar & rows;
+    ar & cols;
     // Because our matrix is dynamic we need to ensure resizing
     if (rows * cols != t.size())
         t.resize(rows, cols);

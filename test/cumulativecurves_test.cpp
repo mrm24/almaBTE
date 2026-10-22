@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +30,9 @@
 #include <utilities.hpp>
 #include <where_is_cumulativecurves.hpp>
 
-// Randomly-named directory to store the output of the program.
+// Tabulated references have six significant digits; CSV now preserves full
+// double precision. Randomly-named directory to store the output of the
+// program.
 std::string targetdir;
 
 class G_Environment : public ::testing::Environment {
@@ -102,7 +105,7 @@ TEST(Ccumul_angfreq_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data1.col(ncol) - data_ref1.col(ncol)).norm() /
                          data_ref1.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -125,7 +128,7 @@ TEST(Ccumul_energy_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data2.col(ncol) - data_ref2.col(ncol)).norm() /
                          data_ref2.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -148,7 +151,7 @@ TEST(Ccumul_freq_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data3.col(ncol) - data_ref3.col(ncol)).norm() /
                          data_ref3.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -172,7 +175,7 @@ TEST(Ccumul_MFP_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data4.col(ncol) - data_ref4.col(ncol)).norm() /
                          data_ref4.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -196,7 +199,7 @@ TEST(Ccumul_projMFP_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data5.col(ncol) - data_ref5.col(ncol)).norm() /
                          data_ref5.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -220,7 +223,7 @@ TEST(Ccumul_RT_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data6.col(ncol) - data_ref6.col(ncol)).norm() /
                          data_ref6.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -244,7 +247,7 @@ TEST(kappacumul_angfreq_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data7.col(ncol) - data_ref7.col(ncol)).norm() /
                          data_ref7.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -268,7 +271,7 @@ TEST(kappacumul_energy_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data8.col(ncol) - data_ref8.col(ncol)).norm() /
                          data_ref8.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -292,7 +295,7 @@ TEST(kappacumul_freq_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data9.col(ncol) - data_ref9.col(ncol)).norm() /
                          data_ref9.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -317,7 +320,7 @@ TEST(kappacumul_MFP_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data10.col(ncol) - data_ref10.col(ncol)).norm() /
                          data_ref10.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -342,7 +345,7 @@ TEST(kappacumul_projMFP_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data11.col(ncol) - data_ref11.col(ncol)).norm() /
                          data_ref11.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
@@ -365,7 +368,7 @@ TEST(kappacumul_RT_case, cumulativecurves_test) {
     for (int ncol = 0; ncol < 3; ncol++) {
         double residue = (data12.col(ncol) - data_ref12.col(ncol)).norm() /
                          data_ref12.col(ncol).norm();
-        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 1e-6, 1e-6));
+        EXPECT_TRUE(alma::almost_equal(residue, 0.0, 5e-6, 1e-6));
     }
 }
 
