@@ -24,6 +24,7 @@
 #include <vasp_io.hpp>
 #include <qpoint_grid.hpp>
 #include <processes.hpp>
+#include <processes_msgpack.hpp>
 #include <bulk_hdf5.hpp>
 
 TEST(hdf5_scattering_case, hdf5_scattering_test) {
@@ -69,6 +70,7 @@ TEST(hdf5_scattering_case, hdf5_scattering_test) {
                          syms,
                          *grid,
                          processes,
+                         std::vector<alma::Fourph_process>(),
                          world);
 
     // Get a list of scattering subgroups in the file (should be empty
@@ -123,6 +125,11 @@ TEST(hdf5_scattering_case, hdf5_scattering_test) {
     EXPECT_EQ(loaded.groups, subgroup.groups);
 
     // Remove the temporary file.
-    if (my_id == 0)
+    if (my_id == 0) {
         boost::filesystem::remove(h5fn);
+        boost::filesystem::remove(
+            alma::processes_msgpack_filename(h5fn.string(), "3ph"));
+        boost::filesystem::remove(
+            alma::processes_msgpack_filename(h5fn.string(), "4ph"));
+    }
 }

@@ -15,6 +15,7 @@
 /// @file
 /// Implements full BTE calculations defined in beyondRTA.hpp.
 
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <Eigen/Dense>
@@ -341,15 +342,6 @@ Eigen::MatrixXd calc_kappa(
         }
     }
 
-    // Share the contributions from 3-phonon processes among cores and
-    // add them together.
-    if (comm.size() > 1) {
-        Eigen::MatrixXd my_A(A);
-        A.fill(0.);
-        boost::mpi::all_reduce(
-            comm, my_A.data(), my_A.size(), A.data(), std::plus<double>());
-    }
-
     // contributions from 2-phonon processes
     for (auto& it2 : Gamma2) {
         idx_pair key = it2.first;
@@ -394,50 +386,96 @@ Eigen::MatrixXd calc_kappa(
         }
     }
 
-    // diagonal elements in the system
-    for (int diag_idx = 0; diag_idx < 3 * Ntot; diag_idx++) {
-        A(diag_idx, diag_idx) += 1.0;
+    // Each MPI rank has built the contributions of its own 3- and
+    // 2-phonon processes (both lists are distributed among ranks). Add
+    // them up in the master rank, which is the only one that will assemble
+    // the final matrix and solve the system. The reduction is done in
+    // chunks to keep the message sizes below the MPI int limit and to avoid
+    // duplicating the matrix in memory.
+    {
+        const bool is_master = (comm.rank() == 0);
+        if (comm.size() > 1) {
+            const std::size_t total = static_cast<std::size_t>(A.size());
+            const std::size_t chunk = std::size_t(1) << 26; // 64 Mi doubles
+            std::vector<double> tmp_in, tmp_out;
+            if (is_master) {
+                tmp_in.resize(std::min(chunk, total));
+                tmp_out.resize(std::min(chunk, total));
+            }
+            for (std::size_t off = 0; off < total; off += chunk) {
+                int n = static_cast<int>(std::min(chunk, total - off));
+                if (is_master) {
+                    std::copy(A.data() + off, A.data() + off + n, tmp_in.begin());
+                    boost::mpi::reduce(comm, tmp_in.data(), n, tmp_out.data(),
+                                       std::plus<double>(), 0);
+                    std::copy(tmp_out.begin(), tmp_out.begin() + n, A.data() + off);
+                }
+                else {
+                    boost::mpi::reduce(comm, A.data() + off, n,
+                                       std::plus<double>(), 0);
+                }
+            }
+        }
+        if (!is_master) {
+            // Not needed anymore in this rank.
+            A.resize(0, 0);
+        }
     }
 
-    // Normalise each row for better numerical stability
+    // The master rank assembles the final system and solves it. The
+    // solution is then shared with the rest of ranks.
+    if (comm.rank() == 0) {
+        // diagonal elements in the system
+        for (int diag_idx = 0; diag_idx < 3 * Ntot; diag_idx++) {
+            A(diag_idx, diag_idx) += 1.0;
+        }
 
-    for (int nrow = 0; nrow < 3 * Ntot; nrow++) {
-        double scale = A.row(nrow).array().abs().maxCoeff();
-        A.row(nrow) /= scale;
-        B(nrow) /= scale;
+        // Normalise each row for better numerical stability
+
+        for (int nrow = 0; nrow < 3 * Ntot; nrow++) {
+            double scale = A.row(nrow).array().abs().maxCoeff();
+            A.row(nrow) /= scale;
+            B(nrow) /= scale;
+        }
+
+        // SOLVE SYSTEM
+
+        if (iterative) {
+            Eigen::BiCGSTAB<Eigen::MatrixXd> solver;
+            solver.compute(A);
+
+            // RTA solution to be used as initial guess
+            Eigen::VectorXd H_guess(3 * Ntot);
+
+            H_guess.segment(0, Ntot) =
+                omega.array() * tau.array() * vg.col(0).array();
+            H_guess.segment(Ntot, Ntot) =
+                omega.array() * tau.array() * vg.col(1).array();
+            H_guess.segment(2 * Ntot, Ntot) =
+                omega.array() * tau.array() * vg.col(2).array();
+
+            H = solver.solveWithGuess(B, H_guess);
+        }
+
+        else {
+            H = A.partialPivLu().solve(B);
+        }
+
+        double rel_err = (A * H - B).norm() / B.norm();
+
+        if (rel_err > 1e-3) {
+            std::cout << "alma::beyondRTA::calc_kappa > WARNING:" << std::endl;
+            std::cout << "solution of linear system might be unstable."
+                      << std::endl;
+            std::cout << "Relative error metric = " << rel_err << std::endl;
+        }
+
+        // Free the (large) matrix as soon as possible.
+        A.resize(0, 0);
     }
 
-    // SOLVE SYSTEM
-
-    if (iterative) {
-        Eigen::BiCGSTAB<Eigen::MatrixXd> solver;
-        solver.compute(A);
-
-        // RTA solution to be used as initial guess
-        Eigen::VectorXd H_guess(3 * Ntot);
-
-        H_guess.segment(0, Ntot) =
-            omega.array() * tau.array() * vg.col(0).array();
-        H_guess.segment(Ntot, Ntot) =
-            omega.array() * tau.array() * vg.col(1).array();
-        H_guess.segment(2 * Ntot, Ntot) =
-            omega.array() * tau.array() * vg.col(2).array();
-
-        H = solver.solveWithGuess(B, H_guess);
-    }
-
-    else {
-        H = A.partialPivLu().solve(B);
-    }
-
-    double rel_err = (A * H - B).norm() / B.norm();
-
-    if (rel_err > 1e-3) {
-        std::cout << "alma::beyondRTA::calc_kappa > WARNING:" << std::endl;
-        std::cout << "solution of linear system might be unstable."
-                  << std::endl;
-        std::cout << "Relative error metric = " << rel_err << std::endl;
-    }
+    if (comm.size() > 1)
+        boost::mpi::broadcast(comm, H.data(), static_cast<int>(H.size()), 0);
 
     // PROCESS THE LINEAR SYSTEM SOLUTION
 

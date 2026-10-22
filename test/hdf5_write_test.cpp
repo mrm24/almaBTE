@@ -64,5 +64,6 @@ TEST(hdf5_write_case, hdf5_write_test) {
                          syms,
                          *grid,
                          processes,
+                         std::vector<alma::Fourph_process>(),
                          world);
 }

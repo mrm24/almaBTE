@@ -67,8 +67,8 @@ private:
         const ph_process* t,
         const unsigned int file_version);
 
-    friend struct msgpack::adaptor::pack<ph_process<4, fourph_type>>;
-    friend struct msgpack::adaptor::convert<ph_process<4, fourph_type>>;
+    friend struct msgpack::adaptor::pack<ph_process<N, process_type>>;
+    friend struct msgpack::adaptor::convert<ph_process<N, process_type>>;
 
     friend void save_bulk_hdf5(const char* filename,
                                const std::string& description,
@@ -435,27 +435,34 @@ inline void load_construct_data(Archive& ar,
 } // namespace boost
 
 namespace msgpack {
-using fourph_process = alma::ph_process<4,alma::fourph_type>;
 MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS) {
 namespace adaptor {
-template <>
-struct pack<fourph_process> {
-    /// @brief  Packs an alma::ph_process<4, alma::fourph_type> into a MessagePack stream.
+
+/// MessagePack serialization of an N-phonon process (valid for both
+/// alma::Threeph_process and alma::Fourph_process).
+///
+/// Each process is stored as a 10-element array:
+/// [c, [q_0..q_{N-1}], [alpha_0..alpha_{N-1}], type, domega, sigma,
+///  gaussian_computed, vp2_computed, gaussian, vp2]
+template <std::size_t N, class process_type>
+struct pack<alma::ph_process<N, process_type>> {
+    /// @brief  Packs an alma::ph_process<N, process_type> into a MessagePack stream.
     /// @param o - MessagePack packer object used to write serialized data. E.g. a std::stream
-    /// @param v - The fourph_process instance to serialize.
+    /// @param v - The process instance to serialize.
     /// @return  Reference to the MessagePack packer after writing.
     template <typename Stream>
-    msgpack::packer<Stream>& operator()(msgpack::packer<Stream>& o, fourph_process const& v) const {
+    msgpack::packer<Stream>& operator()(msgpack::packer<Stream>& o,
+                                        alma::ph_process<N, process_type> const& v) const {
         o.pack_array(10);
         o.pack(static_cast<std::uint64_t>(v.c));
-        o.pack_array(4);
+        o.pack_array(N);
         for (auto& x : v.q) o.pack_uint64(x);
-        o.pack_array(4);
+        o.pack_array(N);
         for (auto& x : v.alpha) o.pack_uint64(x);
         o.pack(static_cast<int>(v.type));
         o.pack(v.domega);
         o.pack(v.sigma);
-        
+
         o.pack(v.gaussian_computed);
         o.pack(v.vp2_computed);
         o.pack(v.gaussian);
@@ -465,38 +472,39 @@ struct pack<fourph_process> {
     }
 };
 
-template <>
-struct convert<fourph_process> {
-    /// @brief Deserializes a MessagePack object into a fourph_process instance.
+template <std::size_t N, class process_type>
+struct convert<alma::ph_process<N, process_type>> {
+    /// @brief Deserializes a MessagePack object into an N-phonon process.
     /// @param o - MessagePack object containing the serialized data.
     /// @param v - Destination object to be reconstructed from the serialized data.
     /// @return A reference to the input MessagePack object.
-    msgpack::object const& operator()(msgpack::object const& o, fourph_process& v) const
-    {
+    msgpack::object const& operator()(msgpack::object const& o,
+                                      alma::ph_process<N, process_type>& v) const {
+        using process_t = alma::ph_process<N, process_type>;
+
         if (o.type != msgpack::type::ARRAY || o.via.array.size != 10)
             throw msgpack::type_error();
 
         auto const& a = o.via.array.ptr;
-        
+
         std::size_t c;
-        std::array<std::size_t, 4> q;
-        std::array<std::size_t, 4> alpha;
-        alma::fourph_type type;
-        double domega;
-        double sigma;
-        
+        std::array<std::size_t, N> q;
+        std::array<std::size_t, N> alpha;
+
         c = static_cast<std::size_t>(a[0].as<std::uint64_t>());
-        if (a[1].type != msgpack::type::ARRAY) throw msgpack::type_error();
-        for (size_t j = 0; j < 4; ++j) q[j] = a[1].via.array.ptr[j].as<std::uint64_t>();
-        if (a[2].type != msgpack::type::ARRAY) throw msgpack::type_error();
-        for (size_t j = 0; j < 4; ++j) alpha[j] = a[2].via.array.ptr[j].as<std::uint64_t>();
+        if (a[1].type != msgpack::type::ARRAY || a[1].via.array.size != N)
+            throw msgpack::type_error();
+        for (std::size_t j = 0; j < N; ++j) q[j] = a[1].via.array.ptr[j].as<std::uint64_t>();
+        if (a[2].type != msgpack::type::ARRAY || a[2].via.array.size != N)
+            throw msgpack::type_error();
+        for (std::size_t j = 0; j < N; ++j) alpha[j] = a[2].via.array.ptr[j].as<std::uint64_t>();
 
-        type = static_cast<alma::fourph_type>(a[3].as<int>());
-        domega = a[4].as<double>();
-        sigma  = a[5].as<double>();
+        process_type type = static_cast<process_type>(a[3].as<int>());
+        double domega = a[4].as<double>();
+        double sigma  = a[5].as<double>();
 
-        v.~fourph_process();
-        new (&v) fourph_process(c, q, alpha, type, domega, sigma);
+        v.~process_t();
+        new (&v) process_t(c, q, alpha, type, domega, sigma);
 
         v.gaussian_computed = a[6].as<bool>();
         v.vp2_computed      = a[7].as<bool>();

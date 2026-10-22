@@ -137,11 +137,10 @@ std::vector<Spectrum_at_point> Gamma_grid::compute_my_spectrum(
             this->copy_symmetry(
                     iq, symms, my_spectrum[iq - limits[0]].vg.matrix())
                 .array();
-
-	my_spectrum[iq - limits[0]].wigner_v =
-	    this->copy_symmetry( 
-                    iq, symms, my_spectrum[iq - limits[0]].wigner_v.matrix())
-                .array();
+        // The Wigner velocities are deliberately not symmetrized here: a
+        // plain Cartesian little-group average of v_ss' is only valid for
+        // non-degenerate diagonal elements. The point group is imposed on
+        // the final tensor in calc_kappa_coherence instead.
     }
 
     return my_spectrum;

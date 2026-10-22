@@ -15,6 +15,7 @@
 /// @file
 /// Writes phonon properties associated with HDF5 file to a text file.
 
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <boost/filesystem.hpp>
@@ -97,12 +98,11 @@ int main(int argc, char** argv) {
     auto processes_4ph = std::move(std::get<5>(hdf5_data));
 
     // Get if 4 ph information can be found in the HDF5 file
-    bool hdf5_with4ph = (*processes_4ph).size() != 0;
-    all_reduce(world, boost::mpi::inplace_t<bool>(hdf5_with4ph), 
-               std::logical_or<bool>());
+    bool with4ph = (*processes_4ph).size() != 0;
+    all_reduce(world, boost::mpi::inplace_t<bool>(with4ph), std::logical_or<bool>());
     
-    if (hdf5_with4ph && rank == master) 
-        std::cout << "The HDF5 contains 4 ph information" << std::endl;
+    if (with4ph && rank == master) 
+        std::cout << "The database contains 4 ph information" << std::endl;
 
     // RTA scattering rates at the specified temperature.
     if (rank == master) std::cout << "Calculating scattering rates" << std::endl;
@@ -113,8 +113,8 @@ int main(int argc, char** argv) {
         alma::calc_w0_twoph(*poscar, *grid, twoph_processes, world));
     Eigen::ArrayXXd w0(w3 + w2);
 
-    Eigen::ArrayXXd w4;
-    if (hdf5_with4ph) {
+    Eigen::ArrayXXd w4 = Eigen::ArrayXXd::Zero(w0.rows(), w0.cols());
+    if (with4ph) {
 	if (rank == master) std::cout << "Calculating 4-ph scattering rates" << std::endl;
         w4 = alma::calc_w0_fourph(*grid, *processes_4ph, Tambient, world);
         w0 += w4;
@@ -125,7 +125,6 @@ int main(int argc, char** argv) {
     Eigen::MatrixXd P3plus, P3minus, WP3plus, WP3minus;
     auto phase_space = alma::calc_phase_space(*poscar, *grid, Tambient,
                             *processes, P3plus, P3minus, WP3plus, WP3minus, world);
-
 
     if (rank == master) std::cout << "Calculation the small grain thermal conductivity" << std::endl;
     auto kappa_sg = calc_kappa_sg(*poscar, *grid, *syms, Tambient);
@@ -142,7 +141,7 @@ int main(int argc, char** argv) {
         filewriter << "nq,nbranch,qa[-],qb[-],qc[-],omega[rad/s],C[J/"
                     "m^3-K],tau[s],vx[m/s],vy[m/s],vz[m/s],"
                     "P3minus[ps/rad],P3plus[ps/rad],"
-                    "WP3minus[ps^{4}/rad^{4}],WP3plus[ps^{4}/rad^{4}]"
+                    "WP3minus[ps^{4}/rad^{4}],WP3plus[ps^{4}/rad^{4}],tau3ph[s],tau2ph[s],tau4ph[s]"
                 << std::endl;
 
         int Nq = grid->nqpoints;
@@ -163,11 +162,14 @@ int main(int argc, char** argv) {
                 static_cast<double>(qcoords[2]) / static_cast<double>(grid->nc);
 
             for (int nbranch = 0; nbranch < Nbranches; nbranch++) {
-                // scattering rate
-                double my_w0 = w4(nbranch, nq);
 
-                // relaxation time [seconds]
-                double tau0 = (my_w0 == 0.) ? 0. : (1e-12 / my_w0);
+                // Relaxation times [seconds], if acoustic or not defined it will be set to 0
+                auto tau_of = [](double w) {return (std::isfinite(w) && w > 0.) ? (1e-12 / w) : 0.;};
+
+		double tau0 = tau_of(w0(nbranch, nq));
+                double tau3 = tau_of(w3(nbranch, nq));
+                double tau2 = tau_of(w2(nbranch, nq));
+                double tau4 = tau_of(w4(nbranch, nq));
 
                 // angular frequency [rad/s]
                 double omega = 1e12 * sp.omega[nbranch];
@@ -186,13 +188,13 @@ int main(int argc, char** argv) {
                 filewriter << vg_vector(0) << "," << vg_vector(1) << ","
                         << vg_vector(2) << "," << P3minus(nbranch,nq) << ","
                         << P3plus(nbranch,nq) << "," << WP3minus(nbranch,nq) << ","
-                        << WP3plus(nbranch,nq) << std::endl;
+                        << WP3plus(nbranch,nq) << "," << tau3 << "," << tau2 << "," << tau4 << std::endl;
             }
         }
 
         filewriter.close();
-
-        std::cout << "-Total phase space : " << phase_space.first  << " [ps/rad]" << std::endl;
+        
+	std::cout << "-Total phase space : " << phase_space.first  << " [ps/rad]" << std::endl;
         std::cout << "-Total phase space : " << phase_space.second << " [ps^{4}/rad^{4}]" << std::endl;
         std::cout << "-Small-grain thermal conductivity tensor [W / (m K nm)]:" << std::endl;
         std::cout << kappa_sg << std::endl;
@@ -203,3 +205,4 @@ int main(int argc, char** argv) {
 
     return 0;
 }
+

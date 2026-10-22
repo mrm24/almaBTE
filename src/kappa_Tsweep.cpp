@@ -17,6 +17,9 @@
 /// Material information and sweep settings provided via XML input.
 
 #include <iostream>
+#include <map>
+#include <streambuf>
+#include <fstream>
 #include <functional>
 #include <boost/filesystem.hpp>
 #include <boost/mpi.hpp>
@@ -36,17 +39,27 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <beyondRTA.hpp>
 
+namespace {
+/// Stream buffer discarding everything, used to silence the console
+/// output of the non-root MPI ranks.
+class Null_buffer : public std::streambuf {
+protected:
+    int overflow(int c) override { return c; }
+    std::streamsize xsputn(const char*, std::streamsize n) override { return n; }
+};
+} // namespace
+
 int main(int argc, char** argv) {
     // set up MPI environment
     boost::mpi::environment env;
     boost::mpi::communicator world;
 
-    if (world.size() > 1) {
-        std::cout
-            << "*** ERROR: kappa_Tsweep does not run in parallel mode. ***"
-            << std::endl;
-        world.abort(1);
-    }
+    // Only the root rank talks to the console and writes files. The
+    // remaining ranks just take part in the calculation.
+    const bool is_root = (world.rank() == 0);
+    Null_buffer null_buffer;
+    if (!is_root)
+        std::cout.rdbuf(&null_buffer);
 
     if (argc < 2) {
         std::cout << "USAGE: kappa_Tsweep <inputfile.xml>" << std::endl;
@@ -270,7 +283,14 @@ int main(int argc, char** argv) {
         auto grid = std::move(std::get<3>(hdf5_data));
         auto processes = std::move(std::get<4>(hdf5_data));
 
-        if (processes->size() == 0) {
+        // The processes are distributed among MPI ranks, so the check
+        // must be done on the global number of processes.
+        std::size_t my_nprocesses = processes->size();
+        std::size_t total_nprocesses = 0;
+        boost::mpi::all_reduce(
+            world, my_nprocesses, total_nprocesses, std::plus<std::size_t>());
+
+        if (total_nprocesses == 0) {
             std::cout << "ERROR:" << std::endl;
             std::cout << "List of 3-phonon processes is missing in H5 file."
                       << std::endl;
@@ -460,6 +480,15 @@ int main(int argc, char** argv) {
             u_norm = uvector.array() / uvector.norm();
         }
 
+        const int nranks = world.size();
+        const int my_rank = world.rank();
+
+        // PHASE 1: quantities requiring all MPI ranks (the three-phonon
+        // processes are distributed among them). The scattering rates of
+        // the temperatures handled by this rank in phase 2 are kept.
+        std::map<int, Eigen::ArrayXXd> my_w;
+        std::vector<Eigen::Matrix3d> kappa_BTE_all(NT, Eigen::Matrix3d::Zero());
+
         for (int nT = 0; nT < NT; nT++) {
             double T = Tlist(nT);
 
@@ -470,33 +499,84 @@ int main(int argc, char** argv) {
                 alma::calc_w0_threeph(*grid, *processes, T, world));
             Eigen::ArrayXXd w(w3 + w_elastic);
 
-            Eigen::Matrix3d kappa_RTA = alma::calc_kappa(*poscar, *grid, *syms, w, T);
-            Eigen::Matrix3d kappa_BTE;
-
             if (fullBTE) {
-                kappa_BTE = alma::beyondRTA::calc_kappa(*poscar,
-                                                        *grid,
-                                                        *syms,
-                                                        *processes,
-                                                        twoph_processes,
-                                                        w,
-                                                        T,
-                                                        fullBTE_iterative,
-                                                        world);
+                kappa_BTE_all[nT] = alma::beyondRTA::calc_kappa(*poscar,
+                                                                *grid,
+                                                                *syms,
+                                                                *processes,
+                                                                twoph_processes,
+                                                                w,
+                                                                T,
+                                                                fullBTE_iterative,
+                                                                world);
             }
 
-            Eigen::Matrix3d kappa_coherence;
+            if (nT % nranks == my_rank)
+                my_w.emplace(nT, std::move(w));
+        }
+
+        // PHASE 2: serial, temperature-independent-of-each-other work
+        // (RTA conductivity, coherence term, heat capacity), distributed
+        // over temperatures among the MPI ranks.
+        Eigen::VectorXd my_kRTA = Eigen::VectorXd::Zero(9 * NT);
+        Eigen::VectorXd my_kcoh = Eigen::VectorXd::Zero(9 * NT);
+        Eigen::VectorXd my_cv = Eigen::VectorXd::Zero(NT);
+
+        for (auto& entry : my_w) {
+            int nT = entry.first;
+            double T = Tlist(nT);
+            const Eigen::ArrayXXd& w = entry.second;
+
+            Eigen::Matrix3d kappa_RTA = alma::calc_kappa(*poscar, *grid, *syms, w, T);
 
             if (coherence) {
-                
-                kappa_coherence = alma::calc_kappa_coherence(*poscar, *grid, *syms, w, T);
+                Eigen::Matrix3d kappa_coherence =
+                    alma::calc_kappa_coherence(*poscar, *grid, *syms, w, T);
 
-                if (projectConductivity) {
-                    Eigen::MatrixXd kappa_u = 
-                        u_norm.transpose() * kappa_coherence.matrix() * u_norm;
-                    coherence_Output_Buffer << T << "," << kappa_u(0, 0); 
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        my_kcoh(9 * nT + 3 * i + j) = kappa_coherence(i, j);
+            }
+
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    my_kRTA(9 * nT + 3 * i + j) = kappa_RTA(i, j);
+
+            if (outputCapacity)
+                my_cv(nT) = 1e27 * alma::calc_cv(*poscar, *grid, T);
+        }
+        my_w.clear();
+
+        // Each temperature was handled by exactly one rank and the rest
+        // of them hold zeros, so a sum collects everything.
+        Eigen::VectorXd kRTA_all = Eigen::VectorXd::Zero(9 * NT);
+        Eigen::VectorXd kcoh_all = Eigen::VectorXd::Zero(9 * NT);
+        Eigen::VectorXd cv_all = Eigen::VectorXd::Zero(NT);
+        boost::mpi::all_reduce(world, my_kRTA.data(), my_kRTA.size(), kRTA_all.data(), std::plus<double>());
+        boost::mpi::all_reduce(world, my_kcoh.data(), my_kcoh.size(), kcoh_all.data(), std::plus<double>());
+        boost::mpi::all_reduce(world, my_cv.data(), my_cv.size(), cv_all.data(), std::plus<double>());
+
+        // PHASE 3: formatting of the results (root only).
+        for (int nT = 0; is_root && nT < NT; nT++) {
+            double T = Tlist(nT);
+
+            Eigen::Matrix3d kappa_RTA, kappa_coherence;
+            const Eigen::Matrix3d& kappa_BTE = kappa_BTE_all[nT];
+
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    kappa_RTA(i, j) = kRTA_all(9 * nT + 3 * i + j);
+                    kappa_coherence(i, j) = kcoh_all(9 * nT + 3 * i + j);
                 }
-                else{
+            }
+
+            if (coherence) {
+                if (projectConductivity) {
+                    Eigen::MatrixXd kappa_u =
+                        u_norm.transpose() * kappa_coherence.matrix() * u_norm;
+                    coherence_Output_Buffer << T << "," << kappa_u(0, 0);
+                }
+                else {
                     coherence_Output_Buffer << T << ",";
                     coherence_Output_Buffer << kappa_coherence(0, 0) << "," << kappa_coherence(0, 1) << ",";
                     coherence_Output_Buffer << kappa_coherence(0, 2) << "," << kappa_coherence(1, 1) << ",";
@@ -504,7 +584,6 @@ int main(int argc, char** argv) {
                 }
 
                 coherence_Output_Buffer << std::endl;
-
             }
 
             if (projectConductivity) { // write conductivity along chosen
@@ -545,65 +624,68 @@ int main(int argc, char** argv) {
             }
 
             if (outputCapacity) {
-                outputbuffer << "," << 1e27 * alma::calc_cv(*poscar, *grid, T);
+                outputbuffer << "," << cv_all(nT);
             }
 
             outputbuffer << std::endl;
         } // END CALCULATIONS
 
-        // WRITE FILE
+        // WRITE FILE (root only)
+        if (is_root) {
 
-        // go to the launch directory
-        boost::filesystem::current_path(launch_path);
 
-        // resolve output directory if AUTO is selected
-        if (target_directory.compare("AUTO") == 0) {
-            target_directory = "output/kappa_Tsweep";
-        }
+            // go to the launch directory
+            boost::filesystem::current_path(launch_path);
 
-        // create output directory if it doesn't exist yet
-        auto outputfolder = boost::filesystem::path(target_directory);
-
-        if (!(boost::filesystem::exists(outputfolder))) {
-            boost::filesystem::create_directories(outputfolder);
-        }
-
-        boost::filesystem::current_path(launch_path);
-
-        // resolve file name if AUTO selected
-
-        if (target_filename.compare("AUTO") == 0) {
-            std::stringstream filenamebuilder;
-            filenamebuilder << mat_base << "_" << gridDensityA << "_"
-                            << gridDensityB << "_" << gridDensityC;
-
-            if (projectConductivity) {
-                filenamebuilder << "_" << uvector(0) << "," << uvector(1) << ","
-                                << uvector(2);
+            // resolve output directory if AUTO is selected
+            if (target_directory.compare("AUTO") == 0) {
+                target_directory = "output/kappa_Tsweep";
             }
 
-            filenamebuilder << "_" << Tmin << "_" << Tmax;
+            // create output directory if it doesn't exist yet
+            auto outputfolder = boost::filesystem::path(target_directory);
 
-            filenamebuilder << ".Tsweep";
-            target_filename = filenamebuilder.str();
-        }
+            if (!(boost::filesystem::exists(outputfolder))) {
+                boost::filesystem::create_directories(outputfolder);
+            }
 
-        // save file
+            boost::filesystem::current_path(launch_path);
 
-        std::cout << std::endl;
-        std::cout << "Writing to file " << target_filename << std::endl;
-        std::cout << "in subdirectory " << target_directory << std::endl;
-        std::cout << "under root directory " << launch_path << std::endl;
+            // resolve file name if AUTO selected
 
-        std::ofstream outputwriter;
-        outputwriter.open("./" + target_directory + "/" + target_filename);
-        outputwriter << outputbuffer.str();
-        outputwriter.close();
+            if (target_filename.compare("AUTO") == 0) {
+                std::stringstream filenamebuilder;
+                filenamebuilder << mat_base << "_" << gridDensityA << "_"
+                                << gridDensityB << "_" << gridDensityC;
 
-        if (coherence) {
-            outputwriter.open("./" + target_directory + "/" + target_filename + "_coherence");
-            outputwriter << coherence_Output_Buffer.str();
+                if (projectConductivity) {
+                    filenamebuilder << "_" << uvector(0) << "," << uvector(1) << ","
+                                    << uvector(2);
+                }
+
+                filenamebuilder << "_" << Tmin << "_" << Tmax;
+
+                filenamebuilder << ".Tsweep";
+                target_filename = filenamebuilder.str();
+            }
+
+            // save file
+
+            std::cout << std::endl;
+            std::cout << "Writing to file " << target_filename << std::endl;
+            std::cout << "in subdirectory " << target_directory << std::endl;
+            std::cout << "under root directory " << launch_path << std::endl;
+
+            std::ofstream outputwriter;
+            outputwriter.open("./" + target_directory + "/" + target_filename);
+            outputwriter << outputbuffer.str();
             outputwriter.close();
+
+            if (coherence) {
+                outputwriter.open("./" + target_directory + "/" + target_filename + "_coherence");
+                outputwriter << coherence_Output_Buffer.str();
+                outputwriter.close();
+            }
         }
 
         std::cout << std::endl << "[DONE.]" << std::endl;

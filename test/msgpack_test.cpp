@@ -1,150 +1,86 @@
 #include <boost/mpi.hpp>
 #include <iostream>
-#include <fstream>
 #include <vector>
 #include <string>
 #include <cassert>
 #include <stdexcept>
-#include <msgpack.hpp>
-#include <processes.hpp>
+#include <processes_msgpack.hpp>
+
+namespace {
+
+/// Build the reference processes owned by this rank.
+template <std::size_t N, class process_type>
+std::vector<alma::ph_process<N, process_type>> make_reference(
+    std::size_t ntot, const boost::mpi::communicator& world,
+    const std::vector<process_type>& types) {
+    using proc_t = alma::ph_process<N, process_type>;
+    std::vector<proc_t> reference;
+    auto limits = alma::my_jobs(ntot, world.size(), world.rank());
+    reference.reserve(limits[1] - limits[0]);
+    for (auto i = limits[0]; i < limits[1]; i++) {
+        std::array<std::size_t, N> q, alpha;
+        for (std::size_t j = 0; j < N; ++j) {
+            q[j] = i + j;
+            alpha[j] = i + N + j;
+        }
+        proc_t p(i, q, alpha, types[i % types.size()], 2. * i + 0.5, 4. * i + 0.5);
+        p.compute_gaussian();
+        p.set_vp2(6. * i);
+        reference.emplace_back(p);
+    }
+    return reference;
+}
+
+/// Write, read back and compare.
+template <std::size_t N, class process_type>
+void roundtrip(const std::string& filename, std::size_t ntot,
+               const std::vector<process_type>& types,
+               const alma::ph_process<N, process_type>& blank,
+               const boost::mpi::communicator& world) {
+    auto reference = make_reference<N>(ntot, world, types);
+    alma::save_processes_msgpack(filename, reference, world);
+    world.barrier();
+    auto check = alma::load_processes_msgpack(filename, world, blank);
+    if (check.size() != reference.size()) {
+        std::cerr << "[rank " << world.rank() << "] size mismatch: check=" << check.size()
+                  << " reference=" << reference.size() << "\n";
+        world.abort(1);
+    }
+    for (std::size_t i = 0; i < reference.size(); ++i) {
+        if (!(check[i] == reference[i])) {
+            std::cerr << "[rank " << world.rank() << "] mismatch at record " << i << "\n";
+            world.abort(1);
+        }
+    }
+    world.barrier();
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
-
     boost::mpi::environment env(argc, argv);
     boost::mpi::communicator world;
+    const std::size_t nref = 500000;
 
-    const auto rank = world.rank();
-    const auto nproc = world.size();
-    const auto root = 0;
-    const std::string filename_4ph = "4ph.testing.msgpack";
-    const std::size_t n4ph_ref = 5000000;
-    std::size_t n4ph_check;
+    roundtrip<4, alma::fourph_type>(
+        "4ph.testing.msgpack", nref,
+        {alma::fourph_type::splitting, alma::fourph_type::recombination,
+         alma::fourph_type::redistribution},
+        alma::Fourph_process(0, {0, 0, 0, 0}, {0, 0, 0, 0}, alma::fourph_type::splitting, 0., 0.),
+        world);
 
-    std::vector<alma::Fourph_process> reference, check;
+    roundtrip<3, alma::threeph_type>(
+        "3ph.testing.msgpack", nref,
+        {alma::threeph_type::emission, alma::threeph_type::absorption},
+        alma::Threeph_process(0, {0, 0, 0}, {0, 0, 0}, alma::threeph_type::emission, 0., 0.),
+        world);
 
-    /// Filling
-    {
+    // Empty set of processes: header-only file.
+    roundtrip<3, alma::threeph_type>(
+        "3ph.empty.testing.msgpack", 0, {alma::threeph_type::emission},
+        alma::Threeph_process(0, {0, 0, 0}, {0, 0, 0}, alma::threeph_type::emission, 0., 0.),
+        world);
 
-        auto limits = alma::my_jobs(n4ph_ref, world.size(), world.rank());
-        reference.reserve(limits[1] - limits[0]);
-
-        for (auto i = limits[0]; i < limits[1]; i++) {
-            alma::fourph_type type;
-            if (i % 3 == 0) {
-                type = alma::fourph_type::splitting;
-            } else if (i % 2 == 0) {
-                type = alma::fourph_type::recombination;
-            } else {
-                type = alma::fourph_type::redistribution;
-            }
-            // if ( world.rank() == nproc -1) std::cout << world.rank() << '\t' << i << '\t' << static_cast<int>(type) << std::endl;
-            alma::Fourph_process p(i, {i,i+1,i+2,i+3},{i+4,i+5,i+6,i+7}, type, 2.*i + 0.5, 4.*i + 0.5);
-            p.compute_gaussian();
-            p.set_vp2(6.*i);
-            reference.emplace_back(p);
-        }
-
-    }
-
-    /// Dump into a file
-    {
-        /// The master
-        world.barrier();
-        if (world.rank() == 0) {
-            std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::trunc);
-            if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
-            msgpack::pack(ofs, static_cast<std::uint64_t>(n4ph_ref));
-            for (const auto& elem : reference) msgpack::pack(ofs, elem);
-            ofs.flush();
-            ofs.close();
-        }
-        world.barrier();
-
-        /// The other processes append
-        for (auto iproc = 1; iproc < world.size(); iproc++) {
-            if (iproc == world.rank()) {
-                std::ofstream ofs(filename_4ph, std::ios::binary | std::ios::app);
-                if (!ofs) throw std::runtime_error("Failed to open file for writting: " + filename_4ph);
-                for (const auto& elem : reference) msgpack::pack(ofs, elem);
-                ofs.flush();
-                ofs.close();
-            }
-            world.barrier();
-        }
-    }
-
-    /// Reading
-    {
-        std::ifstream ifs(filename_4ph, std::ios::binary);
-        if (!ifs) throw std::runtime_error("Failed to open file for reading: " + filename_4ph);
-
-        msgpack::unpacker pac;
-        auto read_more = [&](std::size_t want) {
-            // Ensure unpacker has room, read from file into its internal buffer
-            pac.reserve_buffer(want);
-            ifs.read(pac.buffer(), want);
-            std::streamsize got = ifs.gcount();
-            if (got <= 0) return std::size_t(0);
-            pac.buffer_consumed(static_cast<std::size_t>(got));
-            return static_cast<std::size_t>(got);
-        };
-
-        constexpr std::size_t chunk_size = 5 << 20; // 5 MB at a time, it is more than enough to hold several 4ph objects
-
-        /// Read the size
-        msgpack::object_handle oh;
-        while (!pac.next(oh)) {
-            if (read_more(chunk_size) == 0)
-                throw std::runtime_error("Unexpected EOF reading from " + filename_4ph);
-        }
-        std::size_t n4ph = oh.get().as<std::uint64_t>();
-
-        auto limits = alma::my_jobs(n4ph, world.size(), world.rank());
-        check.reserve(limits[1] - limits[0]);
-
-        // Skip records before limits[0]
-        for (std::size_t i = 0; i < limits[0]; ++i) {
-            while (!pac.next(oh)) {
-                if (read_more(chunk_size) == 0)
-                    throw std::runtime_error("Unexpected EOF while skipping entries in " + filename_4ph);
-            }
-        }
-
-        // Read this rank's chunk [limits[0], limits[1]) ---
-        for (std::size_t i = limits[0]; i < limits[1]; ++i) {
-            while (!pac.next(oh)) {
-                if (read_more(chunk_size) == 0)
-                    throw std::runtime_error("Unexpected EOF while reading rank's (" +
-                        std::to_string(world.rank()) + ") entries in " + filename_4ph);
-            }
-            alma::Fourph_process p(0, {0,0,0,0},{0,0,0,0}, alma::fourph_type::splitting, 0., 0.);
-            oh.get().convert(p);
-            check.emplace_back(p);
-            // if ( world.rank() == nproc -1) std::cout << world.rank() << '\t' << i << '\t' << static_cast<int>(p.type) << std::endl;
-        }
-        
-        n4ph_check = n4ph;
-
-        ifs.close();
-    }
-
-    /// Testing
-     {
-        if (n4ph_check != n4ph_ref) {
-            std::cerr << "[rank " << rank << "] total size mismatch \n";
-            world.abort(1);
-        }
-        if (check.size() != reference.size()) {
-            std::cerr << "[rank " << rank << "] size mismatch: check="
-                      << check.size() << " reference=" << reference.size() << "\n";
-            world.abort(1);
-        }
-        for (std::size_t i = 0; i < reference.size(); ++i) {
-
-            assert(check[i] == reference[i] && "mismatch between read-back and reference record");
-        }
-        world.barrier();
-        if (rank == root) std::cout << "All ranks: read-back matches reference.\n";
-    }
+    if (world.rank() == 0) std::cout << "All ranks: read-back matches reference (3ph and 4ph).\n";
     return 0;
 }
