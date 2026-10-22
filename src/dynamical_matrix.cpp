@@ -214,7 +214,7 @@ void Dynamical_matrix_builder::remove_dipole_dipole(
         n_commensurate, Eigen::MatrixXcd::Zero(ndof, ndof));
     for (int i = 0; i < n_commensurate; i++) {
         auto nac = this->build_nac_gonze(conmensurate_points.col(i));
-        auto dyn = this->build_short_range(conmensurate_points.col(i));
+        auto dyn = this->build_interpolated(conmensurate_points.col(i));
         dynamical_matrix_sr[i] = dyn[0] - nac[0].matrix();
     }
 
@@ -526,7 +526,7 @@ template <typename T> T eigen_pairwise_sum(std::vector<T>& v) {
 }
 
 
-std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build_short_range(
+std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build_interpolated(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
     Eigen::MatrixXd qbzs = this->structure.map_to_firstbz(q);
     Eigen::Vector3d qbz{qbzs.col(0)};
@@ -584,7 +584,7 @@ std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build_short_range(
 
 std::array<Eigen::MatrixXcd, 4> Dynamical_matrix_builder::build(
     const Eigen::Ref<const Eigen::Vector3d>& q) const {
-    auto result = build_short_range(q);
+    auto result = build_interpolated(q);
     if (nonanalytic && nonanalytic_method == nonanalytic_treatment::gonze) {
         const auto long_range = build_nac_gonze(q);
         for (int component = 0; component < 4; ++component)
@@ -618,7 +618,8 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     auto ndof = this->blocks[0].cols();
     int natoms = ndof / 3;
 
-    // Compute the Short-range + Wang_NAC dynamical matrix.
+    // Build the dynamical matrix and its derivatives, including the selected
+    // nonanalytic correction.
     auto matrices = this->build(q);
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> solver(matrices[0]);

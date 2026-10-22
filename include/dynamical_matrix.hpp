@@ -171,8 +171,8 @@ public:
         const Harmonic_ifcs& fcs,
         const Dielectric_parameters& born,
         nonanalytic_treatment nonanalytic_method = nonanalytic_treatment::wang);
-    /// Return the dynamical matrix and its derivatives
-    /// at one point.
+    /// Return the dynamical matrix and its derivatives at one point,
+    /// including the selected nonanalytic correction.
     ///
     /// @param[in] q - the q point in Cartesian coordinates
     /// @return an array containing the dynamical matrix and the
@@ -222,8 +222,11 @@ public:
 
 
 private:
-    /// Interpolated short-range terms (also used during Gonze subtraction).
-    std::array<Eigen::MatrixXcd, 4> build_short_range(
+    /// Interpolate stored IFC blocks and their derivatives, including Wang's
+    /// correction when selected. build() adds the Gonze contribution
+    /// separately. Also used before reconstructing short-range IFCs by Gonze
+    /// subtraction.
+    std::array<Eigen::MatrixXcd, 4> build_interpolated(
         const Eigen::Ref<const Eigen::Vector3d>& q) const;
     /// Building blocks of the dynamical matrix. Those are built
     /// from the IFC matrices and the masses, taking into account
