@@ -7,6 +7,7 @@ add_library(alma_framework STATIC structures.cpp
   qpoint_grid.cpp
   isotopic_scattering.cpp
   processes.cpp
+  threeph_processes.cpp
   bulk_hdf5.cpp
   sampling.cpp
   bulk_properties.cpp
@@ -16,66 +17,68 @@ add_library(alma_framework STATIC structures.cpp
   analytic1d.cpp
   beyondRTA.cpp
   shengbte_iter.cpp
+  interfaces.cpp
+  gruneisen_properties.cpp
+  material_builder.cpp
 )
+
+# Propagate the language requirement and MPI usage requirements to consumers.
+target_compile_features(alma_framework PUBLIC cxx_std_17)
+target_compile_definitions(alma_framework PUBLIC BOOST_LOG_DYN_LINK)
+target_link_libraries(alma_framework PUBLIC MPI::MPI_CXX ${ALMA_SPGLIB_TARGET}
+  Boost::filesystem Boost::mpi Boost::serialization Boost::log HDF5::HDF5 Threads::Threads)
+if(ALMA_OPENMP AND OpenMP_CXX_FOUND)
+  target_link_libraries(alma_framework PUBLIC OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(benchmark_threeph EXCLUDE_FROM_ALL ../benchmarks/threeph.cpp)
+target_link_libraries(benchmark_threeph alma_framework)
+
+add_executable(convert_bulk_hdf5 convert_bulk_hdf5.cpp)
+target_link_libraries(convert_bulk_hdf5 alma_framework)
 
 # Define our executables.
 
 add_executable(VCAbuilder VCAbuilder.cpp)
-target_link_libraries(VCAbuilder alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(VCAbuilder alma_framework)
 
 add_executable(superlattice_builder superlattice_builder.cpp)
-target_link_libraries(superlattice_builder alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(superlattice_builder alma_framework)
 
 add_executable(phononinfo phononinfo.cpp)
-target_link_libraries(phononinfo alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(phononinfo alma_framework)
 
 add_executable(kappa_Tsweep kappa_Tsweep.cpp)
-target_link_libraries(kappa_Tsweep alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(kappa_Tsweep alma_framework)
 
 add_executable(kappa_crossplanefilms kappa_crossplanefilms.cpp)
-target_link_libraries(kappa_crossplanefilms alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(kappa_crossplanefilms alma_framework)
 
 add_executable(kappa_inplanefilms kappa_inplanefilms.cpp)
-target_link_libraries(kappa_inplanefilms alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(kappa_inplanefilms alma_framework)
 
 add_executable(cumulativecurves cumulativecurves.cpp)
-target_link_libraries(cumulativecurves alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(cumulativecurves alma_framework)
 
 add_executable(transient_analytic1d transient_analytic1d.cpp)
-target_link_libraries(transient_analytic1d alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(transient_analytic1d alma_framework)
 
 add_executable(steady_montecarlo1d steady_montecarlo1d.cpp)
-target_link_libraries(steady_montecarlo1d alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(steady_montecarlo1d alma_framework)
 
 add_executable(steady_montecarlo1d_powersource steady_montecarlo1d_powersource.cpp)
-target_link_libraries(steady_montecarlo1d_powersource alma_framework
-${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-libsymspg ${HDF5_LIBS} Threads::Threads)
+target_link_libraries(steady_montecarlo1d_powersource alma_framework)
+
+add_executable(interfaces interface_conductance.cpp)
+target_link_libraries(interfaces alma_framework)
+
+add_executable(gruneisen gruneisen.cpp)
+target_link_libraries(gruneisen alma_framework)
 
 # shengbtepp is a separate target that will not be built by "make all"
 if(BUILD_SHENGBTEPP)
   add_executable(shengbtepp EXCLUDE_FROM_ALL read_shengcontrol.f90 shengbtepp.cpp)
-  target_link_libraries(shengbtepp alma_framework
-  ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
-  libsymspg ${HDF5_LIBS} Threads::Threads)
+  target_link_libraries(shengbtepp alma_framework)
 endif()
 
 # These custom commands provide the tests with the right path to some of the executables in ALMA

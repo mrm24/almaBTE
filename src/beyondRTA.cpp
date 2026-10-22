@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,16 +24,15 @@
 
 namespace alma {
 namespace beyondRTA {
-Eigen::MatrixXd calc_kappa(
-    const alma::Crystal_structure& poscar,
-    const alma::Gamma_grid& grid,
-    const alma::Symmetry_operations& syms,
-    const std::vector<alma::Threeph_process>& threeph_procs,
-    const std::vector<alma::Twoph_process>& twoph_procs,
-    const Eigen::Ref<const Eigen::ArrayXXd>& w0,
-    double T,
-    bool iterative,
-    boost::mpi::communicator& comm) {
+Eigen::MatrixXd calc_kappa(const alma::Crystal_structure& poscar,
+                           const alma::Gamma_grid& grid,
+                           const alma::Symmetry_operations& syms,
+                           const alma::Threeph_processes& threeph_procs,
+                           const std::vector<alma::Twoph_process>& twoph_procs,
+                           const Eigen::Ref<const Eigen::ArrayXXd>& w0,
+                           double T,
+                           bool iterative,
+                           boost::mpi::communicator& comm) {
     typedef std::array<int, 3> idx_triplet;
     typedef std::array<int, 2> idx_pair;
 
@@ -142,7 +141,7 @@ Eigen::MatrixXd calc_kappa(
     // build the list of Gamma values for 3-phonon processes
 
     for (std::size_t nproc = 0; nproc < threeph_procs.size(); nproc++) {
-        alma::Threeph_process myprocess = threeph_procs.at(nproc);
+        auto myprocess = threeph_procs.at(nproc);
         double Gamma = myprocess.compute_gamma(grid, T);
         bool gammaplus = (myprocess.type == alma::threeph_type::absorption);
 

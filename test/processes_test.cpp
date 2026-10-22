@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ TEST(processes_case, processes_test) {
         alma::load_FORCE_CONSTANTS(ifc_path.string().c_str(), *poscar, 5, 5, 5);
 
     // We first try a homogeneous grid, the simplest case.
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 12, 12, 12);
     grid->enforce_asr();
 
@@ -69,7 +69,7 @@ TEST(processes_case, processes_test) {
     }
 
     // And then do the same test for a inhomogeneous grid.
-    grid = alma::make_unique<alma::Gamma_grid>(
+    grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 12, 12, 11);
     grid->enforce_asr();
     processes = alma::find_allowed_threeph(*grid, world, 0.1);

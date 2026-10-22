@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -135,7 +135,7 @@ TEST(vc_test_case, mix_dielectric_parameters_throws) {
 
     for (auto b : gaas_born->born)
         born.emplace_back(b);
-    gaas_born = alma::make_unique<alma::Dielectric_parameters>(
+    gaas_born = std::make_unique<alma::Dielectric_parameters>(
         born, gaas_born->epsilon);
 
     EXPECT_THROW(alma::vc_mix_dielectric_parameters({*inas_born, *gaas_born},

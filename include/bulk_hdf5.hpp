@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,7 +46,7 @@ void save_bulk_hdf5(const char* filename,
                     const Crystal_structure& cell,
                     const Symmetry_operations& symmetries,
                     const Gamma_grid& grid,
-                    const std::vector<Threeph_process>& processes,
+                    const Threeph_processes& processes,
                     const boost::mpi::communicator& comm);
 
 /// Reconstruct all data structures from a file saved with
@@ -65,7 +66,7 @@ std::tuple<std::string,
            std::unique_ptr<Crystal_structure>,
            std::unique_ptr<Symmetry_operations>,
            std::unique_ptr<Gamma_grid>,
-           std::unique_ptr<std::vector<Threeph_process>>>
+           std::unique_ptr<Threeph_processes>>
 load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm);
 
 /// Return the names of all subgroups in the "/scattering" group of
@@ -157,4 +158,32 @@ Scattering_subgroup load_scattering_subgroup(
 void write_scattering_subgroup(const char* filename,
                                const Scattering_subgroup& group,
                                const boost::mpi::communicator& comm);
+
+/// Add a subgroup to the "/ifcs" group of the HDF5 file.
+///
+/// The existence of the group is not checked.
+/// @param[in] filename - path to the HDF5 file
+/// @param[in] harmonic_ifcs - harmonic IFCs
+/// @param[in] anharmonic_ifcs - anharmonic IFCs
+/// @param[in] comm - MPI communicator used to coordinate with all
+/// other processes
+void write_ifcs_subgroup(const char* filename,
+                         const Harmonic_ifcs& harmonic_ifcs,
+                         const std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
+                         const boost::mpi::communicator& comm);
+
+/// Read "/ifcs" group of the HDF5 file.
+///
+/// The existence of the group is not checked.
+/// @param[in] filename - path to the HDF5 file
+/// @param[out] harmonic_ifcs - harmonic IFCs
+/// @param[out] anharmonic_ifcs - anharmonic IFCs
+/// @param[in] comm - MPI communicator used to coordinate with all
+/// other processes
+void load_ifcs_subgroup(const char* filename,
+                        Harmonic_ifcs& harmonic_ifcs,
+                        std::vector<Thirdorder_ifcs>& anharmonic_ifcs,
+                        const boost::mpi::communicator& comm);
+
+
 } // namespace alma

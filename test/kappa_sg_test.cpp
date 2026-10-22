@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,13 +38,15 @@ TEST(kappa_sg_case, kappa_sg_test) {
         alma::load_FORCE_CONSTANTS(ifc_path.string().c_str(), *poscar, 5, 5, 5);
     auto born = alma::load_BORN(born_path.string().c_str());
 
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, *born, 12, 12, 12);
 
     grid->enforce_asr();
 
-    Eigen::Matrix3d kappa_sg = alma::calc_kappa_sg(*poscar, *grid, 300.);
+    Eigen::Matrix3d kappa_sg = alma::calc_kappa_sg(*poscar, *grid, syms, 300.);
 
-    EXPECT_TRUE(alma::almost_equal(1.75453, kappa_sg(0, 0), 1e-2));
-    EXPECT_TRUE(alma::almost_equal(2.12192, kappa_sg(2, 2), 1e-2));
+    EXPECT_NEAR(1.75453, kappa_sg(0, 0), 1e-2);
+    // Corrected first-BZ handling and Wang derivative (checked by finite
+    // differences).
+    EXPECT_NEAR(2.09919747, kappa_sg(2, 2), 1e-2);
 }

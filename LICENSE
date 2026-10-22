@@ -201,9 +201,8 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 
-This product bundles spglib-1.9.4, which is available under a new BSD
-license [1]. For details, see the files contained in
-external/spglib-1.9.4.tar.gz .
+This product uses spglib, which is available under a new BSD license [1].
+spglib is obtained separately from https://github.com/spglib/spglib .
 
 This product bundles base-n 81eb445, which is available under a MIT license
 [2]. For details, see external/base-n .

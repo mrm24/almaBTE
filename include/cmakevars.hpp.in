@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,4 +25,3 @@
 #define BULK_HDF5_MAJOR_VERSION @BULK_HDF5_MAJOR_VERSION@
 #define BULK_HDF5_MINOR_VERSION @BULK_HDF5_MINOR_VERSION@
 #define TEST_RESOURCE_DIR "@TEST_RESOURCE_DIR@"
-#define NATIVE_SIZE_T @NATIVE_SIZE_T@ 

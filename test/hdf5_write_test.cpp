@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ TEST(hdf5_write_case, hdf5_write_test) {
     auto thirdorder = alma::load_FORCE_CONSTANTS_3RD(
         thirdorder_path.string().c_str(), *poscar);
 
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 12, 12, 12);
 
     grid->enforce_asr();
@@ -52,17 +52,26 @@ TEST(hdf5_write_case, hdf5_write_test) {
     auto processes = alma::find_allowed_threeph(*grid, world, 0.1);
 
     // Precompute everything possible.
-    for (auto& p : processes) {
+    for (auto p : processes) {
         p.compute_gaussian();
         p.compute_vp2(*poscar, *grid, *thirdorder);
     }
 
-    auto h5fn = si_dir / boost::filesystem::path("Si_threeph.h5");
-    alma::save_bulk_hdf5(h5fn.string().c_str(),
-                         "Si test",
-                         *poscar,
-                         syms,
-                         *grid,
-                         processes,
-                         world);
+    std::string h5fn;
+    if (world.rank() == 0)
+        h5fn =
+            (boost::filesystem::temp_directory_path() /
+             boost::filesystem::unique_path("prealma-hdf5-write-%%%%-%%%%.h5"))
+                .string();
+    boost::mpi::broadcast(world, h5fn, 0);
+    alma::save_bulk_hdf5(
+        h5fn.c_str(), "Si test", *poscar, syms, *grid, processes, world);
+    auto loaded = alma::load_bulk_hdf5(h5fn.c_str(), world);
+    const auto expected = alma::calc_w0_threeph(*grid, processes, 300., world);
+    const auto actual = alma::calc_w0_threeph(
+        *std::get<3>(loaded), *std::get<4>(loaded), 300., world);
+    EXPECT_LT((actual - expected).matrix().norm(), 1e-11);
+    world.barrier();
+    if (world.rank() == 0)
+        boost::filesystem::remove(h5fn);
 }

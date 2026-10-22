@@ -21,7 +21,6 @@ template<typename MatrixType> void stable_norm(const MatrixType& m)
   */
   using std::sqrt;
   using std::abs;
-  typedef typename MatrixType::Index Index;
   typedef typename MatrixType::Scalar Scalar;
   typedef typename NumTraits<Scalar>::Real RealScalar;
   
@@ -171,7 +170,13 @@ template<typename MatrixType> void stable_norm(const MatrixType& m)
     VERIFY(!(numext::isfinite)(v.norm()));          VERIFY((numext::isnan)(v.norm()));
     VERIFY(!(numext::isfinite)(v.stableNorm()));    VERIFY((numext::isnan)(v.stableNorm()));
     VERIFY(!(numext::isfinite)(v.blueNorm()));      VERIFY((numext::isnan)(v.blueNorm()));
-    VERIFY(!(numext::isfinite)(v.hypotNorm()));     VERIFY((numext::isnan)(v.hypotNorm()));
+    if (i2 != i || j2 != j) {
+      // hypot propagates inf over NaN.
+      VERIFY(!(numext::isfinite)(v.hypotNorm()));     VERIFY((numext::isinf)(v.hypotNorm()));
+    } else {
+      // inf is overwritten by NaN, expect norm to be NaN.
+      VERIFY(!(numext::isfinite)(v.hypotNorm()));     VERIFY((numext::isnan)(v.hypotNorm()));
+    }
   }
 
   // stableNormalize[d]
@@ -221,7 +226,7 @@ void test_hypot()
   VERIFY((numext::isnan)(numext::hypot(a,nan)));
 }
 
-void test_stable_norm()
+EIGEN_DECLARE_TEST(stable_norm)
 {
   for(int i = 0; i < g_repeat; i++) {
     CALL_SUBTEST_3( test_hypot<double>() );

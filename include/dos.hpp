@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ public:
         if ((this->mu == 0.) || (this->sigma == 0.))
             this->dist = nullptr;
         else
-            this->dist = make_unique<boost::math::normal>(mu, sigma);
+            this->dist = std::make_unique<boost::math::normal>(mu, sigma);
     }
 
 

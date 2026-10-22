@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -466,7 +467,8 @@ int main(int argc, char** argv) {
         auto grid = std::move(std::get<3>(hdf5_data));
         auto processes = std::move(std::get<4>(hdf5_data));
 
-        if (processes->size() == 0) {
+        if (boost::mpi::all_reduce(
+                world, processes->size(), std::plus<std::size_t>()) == 0) {
             std::cout << "ERROR:" << std::endl;
             std::cout << "List of 3-phonon processes is missing in H5 file."
                       << std::endl;

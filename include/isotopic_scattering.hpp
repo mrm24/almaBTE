@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,13 +45,7 @@
 #include <qpoint_grid.hpp>
 #include <boost/math/distributions/normal.hpp>
 
-// Forward declarations of elements documented later on.
-// Note that serialization of std::vectors of objects without
-// a default constructor is broken in Boost version 1.58.0. See:
-// http://stackoverflow.com/a/30437359/85371
-// https://svn.boost.org/trac/boost/ticket/11342
-// This will prevent ALMA from compiling. We check for that
-// specific version in our cmake configuration.
+// Forward declarations used by Boost construction hooks.
 namespace alma {
 class Twoph_process;
 }
@@ -80,14 +74,14 @@ private:
                                const Crystal_structure& cell,
                                const Symmetry_operations& symmetries,
                                const Gamma_grid& grid,
-                               const std::vector<Threeph_process>& processes,
+                               const Threeph_processes& processes,
                                const boost::mpi::communicator& comm);
 
     friend std::tuple<std::string,
                       std::unique_ptr<Crystal_structure>,
                       std::unique_ptr<Symmetry_operations>,
                       std::unique_ptr<Gamma_grid>,
-                      std::unique_ptr<std::vector<Threeph_process>>>
+                      std::unique_ptr<Threeph_processes>>
     load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm);
 
     /// Deviation from the conservation of energy.

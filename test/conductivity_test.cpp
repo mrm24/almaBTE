@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,7 +46,7 @@ TEST(conductivity_case, conductivity_test) {
     auto thirdorder = alma::load_FORCE_CONSTANTS_3RD(
         thirdorder_path.string().c_str(), *poscar);
 
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, 12, 12, 12);
 
     grid->enforce_asr();
@@ -80,7 +81,7 @@ TEST(conductivity_case, conductivity_test) {
             alma::calc_w0_threeph(*grid, processes, T, world));
 
         if (my_id == 0) {
-            auto kappa = alma::calc_kappa(*poscar, *grid, total_w0, T);
+            auto kappa = alma::calc_kappa(*poscar, *grid, syms, total_w0, T);
             EXPECT_TRUE(
                 alma::almost_equal(reference[pos], kappa(0, 0), 1e-6, 5e-3));
             EXPECT_TRUE(

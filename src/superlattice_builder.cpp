@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,8 +36,7 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <boost/iostreams/stream_buffer.hpp>
 #include <boost/iostreams/device/null.hpp>
-#include <boost/uuid/sha1.hpp>
-#include <boost/endian/conversion.hpp>
+#include <boost/uuid/detail/sha1.hpp>
 #include <Eigen/Dense>
 #include <basen.hpp>
 #pragma GCC diagnostic push
@@ -70,6 +70,8 @@ int gridDensityA;
 int gridDensityB;
 // number of wavevector points along C-axis
 int gridDensityC;
+// Scalebroad
+double scalebroad = 0.1;
 // root directory
 std::string materials_repository = ".";
 // target directory
@@ -90,6 +92,9 @@ std::size_t nqline;
 bool do3ph = true;
 // overwrite H5 if file already exists?
 bool overwrite = false;
+// NAC method. The default is the Wang method.
+alma::nonanalytic_treatment nonanalytic_method =
+    alma::nonanalytic_treatment::wang;
 ////////////////////////////////////////////
 
 
@@ -121,33 +126,19 @@ std::string get_strprofile(const std::vector<double>& input) {
 /// @param[in] input - vector of doubles
 /// @return the identifier as a string
 std::string get_uid(const std::vector<double>& input) {
-    std::remove_reference<boost::uuids::detail::sha1::digest_type>::type digest;
-    static_assert(sizeof(digest[0]) == 4u,
-                  "expected each element of "
-                  "boost::uuids::detail::sha1::digest_"
-                  "type to take 4 bytes");
+    boost::uuids::detail::sha1::digest_type digest;
     // Convert the input to a comma-separated list.
     auto strprofile = get_strprofile(input);
     // Compute a binary version of its SHA1 hash.
     boost::uuids::detail::sha1 hasher;
     hasher.process_bytes(strprofile.c_str(), strprofile.size());
     hasher.get_digest(digest);
-// Force a single standard endianess.
-#ifdef BOOST_LITTLE_ENDIAN
-
-    for (auto i = 0; i < 5; ++i) {
-        digest[i] = boost::endian::endian_reverse(digest[i]);
-    }
-#endif
-
-    // Convert the hash to a string of (possibly non printable) bytes.
-    strprofile = "";
-
-    for (auto i = 0; i < 5; ++i) {
-        char* tmp = reinterpret_cast<char*>(digest + i);
-
-        for (auto j = 0; j < 4; j++) {
-            strprofile += tmp[j];
+    // Serialize in big-endian order. Older Boost versions return five 32-bit
+    // words; newer versions return twenty bytes. Both must produce the same ID.
+    strprofile.clear();
+    for (auto word : digest) {
+        for (std::size_t byte = sizeof(word); byte > 0; --byte) {
+            strprofile += static_cast<char>((word >> (8 * (byte - 1))) & 0xff);
         }
     }
     // Encode the result in base 32.
@@ -250,6 +241,25 @@ int main(int argc, char** argv) {
         }
         else if (v.first == "overwrite") {
             overwrite = true;
+        }
+
+        else if (v.first == "broadening") {
+            scalebroad = alma::parseXMLfield<double>(v, "scale_factor");
+        }
+
+        else if (v.first == "nonanalytic_treatment") {
+            std::string my_nac = alma::parseXMLfield<std::string>(v, "method");
+            alma::string_to_lower(my_nac);
+            if (my_nac.find("gonze") != std::string::npos) {
+                nonanalytic_method = alma::nonanalytic_treatment::gonze;
+            }
+            else if (my_nac.find("wang") != std::string::npos) {
+                nonanalytic_method = alma::nonanalytic_treatment::wang;
+            }
+            else {
+                throw alma::value_error("Unrecognized NAC treatment: only "
+                                        "Gonze and Wang are supported.");
+            }
         }
 
         else if (v.first != "<xmlcomment>") {
@@ -522,25 +532,27 @@ int main(int argc, char** argv) {
 
     // Objects required to compute the spectrum.
     auto syms = alma::Symmetry_operations(*vc_poscar);
-    auto factory = polar ? alma::make_unique<alma::Dynamical_matrix_builder>(
-                               *vc_poscar, syms, *vc_ifcs, *vc_born)
-                         : alma::make_unique<alma::Dynamical_matrix_builder>(
-                               *vc_poscar, syms, *vc_ifcs);
+    auto factory =
+        polar ? std::make_unique<alma::Dynamical_matrix_builder>(
+                    *vc_poscar, syms, *vc_ifcs, *vc_born, nonanalytic_method)
+              : std::make_unique<alma::Dynamical_matrix_builder>(
+                    *vc_poscar, syms, *vc_ifcs);
 
     // Regular grid on which to compute w0.
-    auto grid = polar ? alma::make_unique<alma::Gamma_grid>(*vc_poscar,
-                                                            syms,
-                                                            *vc_ifcs,
-                                                            *vc_born,
-                                                            gridDensityA,
-                                                            gridDensityB,
-                                                            gridDensityC)
-                      : alma::make_unique<alma::Gamma_grid>(*vc_poscar,
-                                                            syms,
-                                                            *vc_ifcs,
-                                                            gridDensityA,
-                                                            gridDensityB,
-                                                            gridDensityC);
+    auto grid = polar ? std::make_unique<alma::Gamma_grid>(*vc_poscar,
+                                                           syms,
+                                                           *vc_ifcs,
+                                                           *vc_born,
+                                                           nonanalytic_method,
+                                                           gridDensityA,
+                                                           gridDensityB,
+                                                           gridDensityC)
+                      : std::make_unique<alma::Gamma_grid>(*vc_poscar,
+                                                           syms,
+                                                           *vc_ifcs,
+                                                           gridDensityA,
+                                                           gridDensityB,
+                                                           gridDensityC);
     grid->enforce_asr();
     auto nqpoints = grid->nqpoints;
     std::size_t nequiv{grid->get_nequivalences()};
@@ -548,16 +560,17 @@ int main(int argc, char** argv) {
     std::cout << "Number of inequivalent q points: " << nequiv << std::endl;
 
     // If requested, run the third-order calculation for the virtual crystal.
-    std::unique_ptr<std::vector<alma::Threeph_process>> processes;
+    std::unique_ptr<alma::Threeph_processes> processes;
 
     if (do3ph) {
         std::cout << "Performing three-phonon calculations" << std::endl;
+        std::cout << "Using scalebroad = " << scalebroad << std::endl;
         auto vc_thirdorder = alma::vc_mix_thirdorder_ifcs(
             {*(IFC3_ptrs.front()), *(IFC3_ptrs.back())}, {x1st, x2nd});
-        processes = alma::make_unique<std::vector<alma::Threeph_process>>(
+        processes = std::make_unique<alma::Threeph_processes>(
             alma::find_allowed_threeph(*grid, world, 0.1));
 
-        for (auto& p : *processes) {
+        for (auto p : *processes) {
             p.compute_gaussian();
             p.compute_vp2(*vc_poscar, *grid, *vc_thirdorder);
         }
@@ -568,7 +581,7 @@ int main(int argc, char** argv) {
             << std::endl;
         // Note that we still create a valid (but empty) vector of three-phonon
         // processes.
-        processes = alma::make_unique<std::vector<alma::Threeph_process>>();
+        processes = std::make_unique<alma::Threeph_processes>();
     }
 
     // Get the two sets of elastic scattering rates specific to superlattices.

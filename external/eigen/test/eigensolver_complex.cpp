@@ -71,7 +71,6 @@ void verify_is_approx_upto_permutation(const VectorType& vec1, const VectorType&
 
 template<typename MatrixType> void eigensolver(const MatrixType& m)
 {
-  typedef typename MatrixType::Index Index;
   /* this test covers the following files:
      ComplexEigenSolver.h, and indirectly ComplexSchur.h
   */
@@ -153,7 +152,7 @@ template<typename MatrixType> void eigensolver_verify_assert(const MatrixType& m
   VERIFY_RAISES_ASSERT(eig.eigenvectors());
 }
 
-void test_eigensolver_complex()
+EIGEN_DECLARE_TEST(eigensolver_complex)
 {
   int s = 0;
   for(int i = 0; i < g_repeat; i++) {

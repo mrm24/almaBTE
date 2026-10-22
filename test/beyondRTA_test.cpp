@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +24,7 @@
 #include "gtest/gtest.h"
 #include <utilities.hpp>
 #include <vasp_io.hpp>
+#include <dynamical_matrix.hpp>
 #include <qpoint_grid.hpp>
 #include <processes.hpp>
 #include <beyondRTA.hpp>
@@ -49,7 +51,7 @@ TEST(beyondRTA_case, beyondRTA_test) {
     auto thirdorder = alma::load_FORCE_CONSTANTS_3RD(
         thirdorder_path.string().c_str(), *poscar);
 
-    auto grid = alma::make_unique<alma::Gamma_grid>(
+    auto grid = std::make_unique<alma::Gamma_grid>(
         *poscar, syms, *force_constants, *born, 8, 8, 8);
     grid->enforce_asr();
 
@@ -73,7 +75,9 @@ TEST(beyondRTA_case, beyondRTA_test) {
     // target results
     double kapparef_xx = 178.7125556;
     double kapparef_yy = 178.7125556;
-    double kapparef_zz = 190.0217278;
+    // Updated for corrected first-BZ images and Wang wavevector derivatives.
+    // Iterative and direct solves independently agree at this value.
+    double kapparef_zz = 189.8071;
 
     // test beyondRTA conductivity from iterative Eigen solver
     Eigen::Matrix3d kappa1 = alma::beyondRTA::calc_kappa(*poscar,
@@ -88,7 +92,7 @@ TEST(beyondRTA_case, beyondRTA_test) {
 
     EXPECT_TRUE(alma::almost_equal(kapparef_xx, kappa1(0, 0), 1e-8, 1e-3));
     EXPECT_TRUE(alma::almost_equal(kapparef_yy, kappa1(1, 1), 1e-8, 1e-3));
-    EXPECT_TRUE(alma::almost_equal(kapparef_zz, kappa1(2, 2), 1e-8, 1e-3));
+    EXPECT_NEAR(kapparef_zz, kappa1(2, 2), 1e-3 * kapparef_zz);
     kappa1(0, 0) = kappa1(1, 1) = kappa1(2, 2) = 0.0;
     EXPECT_TRUE(alma::almost_equal(kappa1.norm(), 0., 1e-13, 0.));
 
@@ -105,7 +109,7 @@ TEST(beyondRTA_case, beyondRTA_test) {
 
     EXPECT_TRUE(alma::almost_equal(kapparef_xx, kappa2(0, 0), 1e-8, 1e-3));
     EXPECT_TRUE(alma::almost_equal(kapparef_yy, kappa2(1, 1), 1e-8, 1e-3));
-    EXPECT_TRUE(alma::almost_equal(kapparef_zz, kappa2(2, 2), 1e-8, 1e-3));
+    EXPECT_NEAR(kapparef_zz, kappa2(2, 2), 1e-3 * kapparef_zz);
     kappa2(0, 0) = kappa2(1, 1) = kappa2(2, 2) = 0.0;
     EXPECT_TRUE(alma::almost_equal(kappa2.norm(), 0., 1e-13, 0.));
 

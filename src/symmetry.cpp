@@ -1,4 +1,4 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 /// Definitions corresponding to symmetry.hpp.
 
 extern "C" {
-#include <spglib/spglib.h>
+#include <spglib.h>
 }
 
 #include <symmetry.hpp>

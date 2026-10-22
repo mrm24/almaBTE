@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +23,7 @@
 #include <dynamical_matrix.hpp>
 
 namespace alma {
+class Threeph_processes;
 /// Convenient shorthand for an array of four indices.
 using Tetrahedron = std::array<std::size_t, 4>;
 /// Convenient shorthand for an array of three indices.
@@ -61,10 +63,29 @@ public:
                const Symmetry_operations& symms,
                const Harmonic_ifcs& force_constants,
                const Dielectric_parameters& born,
+               const nonanalytic_treatment NAC_method,
                int _na,
                int _nb,
                int _nc);
 
+
+    /// Polar constructor retaining the established Wang default.
+    Gamma_grid(const Crystal_structure& cell,
+               const Symmetry_operations& syms,
+               const Harmonic_ifcs& ifcs,
+               const Dielectric_parameters& born,
+               int a,
+               int b,
+               int c)
+        : Gamma_grid(cell,
+                     syms,
+                     ifcs,
+                     born,
+                     nonanalytic_treatment::wang,
+                     a,
+                     b,
+                     c) {
+    }
 
     /// Set the three lowest frequencies at Gamma to zero.
     void enforce_asr() {
@@ -210,9 +231,22 @@ public:
     /// correspond to operations in the space group,
     /// while elements with odd indices compound them with time
     /// reversal.
-    std::vector<size_t> equivalent_qpoints(std::size_t original) const {
+    /// The borrowed result is valid for the lifetime of this unmoved grid.
+    const std::vector<std::size_t>& equivalent_qpoints(
+        std::size_t original) const& {
         std::size_t index = python_mod(original, this->nqpoints);
         return this->symmetry_map[index];
+    }
+
+    /// A temporary grid must return an owning snapshot, never a dangling view.
+    std::vector<std::size_t> equivalent_qpoints(std::size_t original) && {
+        return static_cast<const Gamma_grid&>(*this).equivalent_qpoints(
+            original);
+    }
+
+    std::vector<std::size_t> equivalent_qpoints(std::size_t original) const&& {
+        return static_cast<const Gamma_grid&>(*this).equivalent_qpoints(
+            original);
     }
 
 
@@ -333,14 +367,14 @@ private:
                                const Crystal_structure& cell,
                                const Symmetry_operations& symmetries,
                                const Gamma_grid& grid,
-                               const std::vector<Threeph_process>& processes,
+                               const Threeph_processes& processes,
                                const boost::mpi::communicator& comm);
 
     friend std::tuple<std::string,
                       std::unique_ptr<Crystal_structure>,
                       std::unique_ptr<Symmetry_operations>,
                       std::unique_ptr<Gamma_grid>,
-                      std::unique_ptr<std::vector<Threeph_process>>>
+                      std::unique_ptr<Threeph_processes>>
     load_bulk_hdf5(const char* filename, const boost::mpi::communicator& comm);
 
     /// Cartesian coordinates of each q point.

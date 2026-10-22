@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +20,7 @@
 /// Helper code to write calculation results into external files.
 
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <algorithm>
 #include <string>
@@ -91,6 +93,10 @@ inline void write_to_csv(const std::string filename,
     }
 
     csvwriter << headermessage;
+
+    constexpr auto max_precision{std::numeric_limits<double>::digits10 + 1};
+
+    csvwriter << std::setprecision(max_precision);
 
     int Nrows = data.rows();
     int Ncols = data.cols();

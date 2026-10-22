@@ -1,4 +1,5 @@
-// Copyright 2015-2018 The ALMA Project Developers
+// Copyright 2023-2026 Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>
+// Copyright 2015-2026 The ALMA Project Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,6 +46,9 @@
 #include <vasp_io.hpp>
 #include <qpoint_grid.hpp>
 #include <bulk_properties.hpp>
+#include <gruneisen.hpp>
+using alma::calc_mode_gruneisen;
+using alma::calc_total_gruneisen;
 #include <dos.hpp>
 #include <isotopic_scattering.hpp>
 #include <processes.hpp>
@@ -184,10 +188,10 @@ std::unique_ptr<std::ostream> open_from_master(const std::string& filename) {
     std::unique_ptr<std::ostream> nruter;
     auto my_id = world.rank();
     if (my_id == 0) {
-        nruter = alma::make_unique<std::ofstream>(filename);
+        nruter = std::make_unique<std::ofstream>(filename);
     }
     else {
-        nruter = alma::make_unique<std::ostream>(&null_buf);
+        nruter = std::make_unique<std::ostream>(&null_buf);
     }
     return std::move(nruter);
 }
@@ -224,86 +228,6 @@ std::array<double, 2> calc_percentiles_log(
     std::array<double, 2> nruter;
     nruter[0] = logsigma[25 * rows * cols / 100];
     nruter[1] = logsigma[75 * rows * cols / 100];
-    return nruter;
-}
-
-
-/// Compute the Grüneisen parameter for each mode on a grid.
-///
-/// @param[in] cell - description of the unit cell
-/// @param[in] grid - regular grid with phonon spectrum
-/// @param[in] fc3 - set of third-order force constants
-/// @return an array with the mode Grüneisen parameters for each q point
-/// and each branch.
-Eigen::ArrayXXd calc_mode_gruneisen(
-    const alma::Crystal_structure& cell,
-    const alma::Gamma_grid& grid,
-    const std::vector<alma::Thirdorder_ifcs>& fc3) {
-    // Factor to transform from nm*eV/(amu * A ** 3 * THz ** 2) to unitless
-    double prefactor = alma::constants::e * 1e-3 / alma::constants::amu;
-    std::size_t nmodes = grid.get_spectrum_at_q(0).omega.size();
-    Eigen::ArrayXXd nruter(Eigen::ArrayXXd::Zero(nmodes, grid.nqpoints));
-
-    for (std::size_t iq = 0; iq < grid.nqpoints; ++iq) {
-        auto spectrum = grid.get_spectrum_at_q(iq);
-        for (std::size_t im = 0; im < nmodes; ++im) {
-            if (spectrum.omega(im) == 0.) {
-                continue;
-            }
-            for (const auto& tri : fc3) {
-                double massfactor =
-                    std::sqrt(cell.get_mass(tri.i) * cell.get_mass(tri.j));
-                double arg = grid.get_q(iq).dot(tri.rj);
-                std::complex<double> factor1 =
-                    (std::cos(arg) + alma::constants::imud * std::sin(arg)) /
-                    massfactor;
-                Eigen::Vector3d cart =
-                    cell.lattvec * cell.positions.col(tri.k) + tri.rk;
-                for (auto rr = 0; rr < 3; ++rr) {
-                    std::complex<double> factor2 =
-                        factor1 * std::conj(spectrum.wfs(3 * tri.i + rr, im));
-                    for (auto ss = 0; ss < 3; ++ss) {
-                        std::complex<double> factor3 =
-                            factor2 * spectrum.wfs(3 * tri.j + ss, im);
-                        for (auto tt = 0; tt < 3; ++tt) {
-                            nruter(im, iq) += std::real(
-                                factor3 * tri.ifc(rr, ss, tt) * cart(tt));
-                        }
-                    }
-                }
-            }
-            nruter(im, iq) *=
-                -prefactor / 6. / boost::math::pow<2>(spectrum.omega(im));
-        }
-    }
-    return nruter;
-}
-
-
-/// Compute the total Grüneisen parameter as a weighted average of mode
-/// Grüneisen parameters.
-///
-/// @param[in] grid - regular grid with phonon spectrum
-/// @param[in] modegrun - Grüneisen parameters for each q point and each branch
-/// @param[in] T - temperature in K
-/// @return the total Grüneisen parameter at the given temperature
-double calc_total_gruneisen(const alma::Gamma_grid& grid,
-                            const Eigen::Ref<const Eigen::ArrayXXd>& modegrun,
-                            double T) {
-    double nruter = 0.;
-    double denominator = 0.;
-    std::size_t nmodes = grid.get_spectrum_at_q(0).omega.size();
-    // The weight of each mode is proportional to its contribution to the heat
-    // capacity.
-    for (std::size_t iq = 0; iq < grid.nqpoints; ++iq) {
-        auto spectrum = grid.get_spectrum_at_q(iq);
-        for (std::size_t im = 0; im < nmodes; ++im) {
-            double weight = alma::bose_einstein_kernel(spectrum.omega(im), T);
-            nruter += weight * modegrun(im, iq);
-            denominator += weight;
-        }
-    }
-    nruter /= denominator;
     return nruter;
 }
 
@@ -345,6 +269,18 @@ int main(int argc, char** argv) {
                   allocations.ngrid[1],
                   allocations.ngrid[2]}) < 1) {
         std::cerr << "Error: all components of ngrid must be must be > 0"
+                  << std::endl;
+        env.abort(1);
+    }
+    // Read in the flag namelist and check for unsupported features.
+    auto flags = read_sheng_flags();
+    if (flags.nanowires) {
+        std::cerr << "Error: nanowire calculations are not implemented"
+                  << std::endl;
+        env.abort(1);
+    }
+    if (flags.espresso) {
+        std::cerr << "Error: Quantum ESPRESSO support is not implemented"
                   << std::endl;
         env.abort(1);
     }
@@ -410,9 +346,11 @@ int main(int argc, char** argv) {
         boost::trim(e);
     }
     std::vector<double> masses(allocations.nelements);
-    read_sheng_masses(&allocations, masses.data());
+    if (!flags.autoisotopes)
+        read_sheng_masses(&allocations, masses.data());
     std::vector<double> gfactors(allocations.nelements);
-    read_sheng_gfactors(&allocations, gfactors.data());
+    if (!flags.autoisotopes)
+        read_sheng_gfactors(&allocations, gfactors.data());
     // Check that the types vector is compatible with alma and
     // convert it to a numbers vector.
     bool types_valid = true;
@@ -440,18 +378,6 @@ int main(int argc, char** argv) {
         }
         ++numbers[j];
     }
-    // Read in the flag namelist and check for unsupported features.
-    auto flags = read_sheng_flags();
-    if (flags.nanowires) {
-        std::cerr << "Error: nanowire calculations are not implemented"
-                  << std::endl;
-        env.abort(1);
-    }
-    if (flags.espresso) {
-        std::cerr << "Error: Quantum ESPRESSO support is not implemented"
-                  << std::endl;
-        env.abort(1);
-    }
     // Read in the parameters namelist and perform some last checks.
     auto parameters = read_sheng_parameters();
     if (parameters.omega_max >= 0) {
@@ -472,11 +398,11 @@ int main(int argc, char** argv) {
     // Create a Crystal_structure based on the information in CONTROL
     std::unique_ptr<alma::Crystal_structure> poscar;
     if (flags.autoisotopes) {
-        poscar = alma::make_unique<alma::Crystal_structure>(
+        poscar = std::make_unique<alma::Crystal_structure>(
             lattvec, positions, elements, numbers);
     }
     else {
-        poscar = alma::make_unique<alma::Crystal_structure>(
+        poscar = std::make_unique<alma::Crystal_structure>(
             lattvec, positions, elements, numbers, masses);
     }
     // And compute the symmetry information.
@@ -505,26 +431,29 @@ int main(int argc, char** argv) {
     // And obtain the spectrum
     std::cout << "Info: about to obtain the spectrum" << std::endl;
     std::cout << "Info: expecting Phonopy 2nd-order format" << std::endl;
+    std::cout << "Info: polar material = " << flags.nonanalytic << std::endl;
     std::unique_ptr<alma::Gamma_grid> grid;
     if (flags.nonanalytic) {
         auto dielectric =
-            alma::make_unique<alma::Dielectric_parameters>(born, epsilon);
-        grid = alma::make_unique<alma::Gamma_grid>(*poscar,
-                                                   syms,
-                                                   *ifcs,
-                                                   *dielectric,
-                                                   allocations.ngrid[0],
-                                                   allocations.ngrid[1],
-                                                   allocations.ngrid[2]);
+            std::make_unique<alma::Dielectric_parameters>(born, epsilon);
+        grid = std::make_unique<alma::Gamma_grid>(
+            *poscar,
+            syms,
+            *ifcs,
+            *dielectric,
+            alma::nonanalytic_treatment::wang,
+            allocations.ngrid[0],
+            allocations.ngrid[1],
+            allocations.ngrid[2]);
     }
 
     else {
-        grid = alma::make_unique<alma::Gamma_grid>(*poscar,
-                                                   syms,
-                                                   *ifcs,
-                                                   allocations.ngrid[0],
-                                                   allocations.ngrid[1],
-                                                   allocations.ngrid[2]);
+        grid = std::make_unique<alma::Gamma_grid>(*poscar,
+                                                  syms,
+                                                  *ifcs,
+                                                  allocations.ngrid[0],
+                                                  allocations.ngrid[1],
+                                                  allocations.ngrid[2]);
     }
     // Note that these lines are emitted after the spectrum calculation,
     // contrary to what happens in ShengBTE.
@@ -681,7 +610,7 @@ int main(int argc, char** argv) {
         for (std::size_t iq = 0; iq < grid->nqpoints; ++iq) {
             auto spectrum = grid->get_spectrum_at_q(iq);
             for (std::size_t im = 0; im < nmodes; ++im) {
-                auto dist = alma::make_unique<boost::math::normal>(
+                auto dist = std::make_unique<boost::math::normal>(
                     spectrum.omega(im), sigma(im, iq));
                 for (std::size_t i = 0;
                      i < static_cast<std::size_t>(parameters.nticks);
@@ -798,8 +727,7 @@ int main(int argc, char** argv) {
             f101 << T << " ";
             f101 << std::scientific << std::setprecision(5);
             f101 << std::setw(14) << cv << std::endl;
-            auto kappa_sg = alma::calc_kappa_sg(*poscar, *grid, T);
-            kappa_sg = syms.symmetrize_m<double>(kappa_sg, true);
+            auto kappa_sg = alma::calc_kappa_sg(*poscar, *grid, syms, T);
             std::ofstream f2("BTE.kappa_sg");
             f2 << std::scientific;
             f2 << std::setprecision(5);
@@ -894,7 +822,7 @@ int main(int argc, char** argv) {
             Eigen::ArrayXXd::Zero(nmodes, grid->get_nequivalences()));
         my_WP3_detailed_minus.push_back(my_WP3_T_minus);
     }
-    for (auto& p : threeph_processes) {
+    for (auto p : threeph_processes) {
         auto gaussian = p.compute_gaussian() / P3_denominator;
         if (p.type == alma::threeph_type::absorption) {
             my_P3_plus += gaussian * grid->get_cardinal(p.c);
@@ -1083,17 +1011,17 @@ int main(int argc, char** argv) {
 
     std::cout << "Info: start calculating kappa" << std::endl;
     // Precompute all the matrix elements.
-    for (auto& p : threeph_processes) {
+    for (auto p : threeph_processes) {
         p.compute_vp2(*poscar, *grid, *thirdorder);
     }
 
     auto fp303 = open_from_master("BTE.KappaTensorVsT_RTA");
     auto fp403 = flags.convergence ? open_from_master("BTE.KappaTensorVsT_CONV")
-                                   : alma::make_unique<std::ostream>(&null_buf);
-    auto is_plus = [](const alma::Threeph_process& p) {
+                                   : std::make_unique<std::ostream>(&null_buf);
+    auto is_plus = [](const alma::Const_threeph_process_view& p) {
         return p.type == alma::threeph_type::absorption;
     };
-    auto is_minus = [](const alma::Threeph_process& p) {
+    auto is_minus = [](const alma::Const_threeph_process_view& p) {
         return p.type == alma::threeph_type::emission;
     };
     // Compute the scattering rates and the conductivity at each temperature.

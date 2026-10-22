@@ -23,7 +23,18 @@ Features of `almaBTE 1.3` include
 
 `almaBTE` includes all the capabilities of [ShengBTE](http://www.shengbte.org) for single crystals (but in a fully new implementation with more efficient solution algorithms). `almaBTE` is fully written in `C++` and freely distributed as open source under `Apache 2.0 License`.
 
+The current integration adds coherence transport, revised polar corrections,
+interface conductance and Grüneisen calculations from the fork by
+**Martí Raya-Moreno <marti.raya.moreno@physik.hu-berlin.de>**. See the
+[integration and HDF5 migration notes](updates_integration.md).
+
 ## Installing and compiling `almaBTE`
+
+The current development version requires CMake 3.25+, C++17+, Boost 1.75+,
+MPI, HDF5 and an external spglib installation. Alternatively, configure with
+`-DALMA_FETCH_SPGLIB=ON` to download spglib. See [the current build and HDF5
+notes](threeph_soa.md) before using the historical installation instructions
+below with a recent checkout.
 
 `almaBTE` relies on several external libraries (`hdf5`, `boost` and `openMPI`) that must be installed before compiling the main program. Detailed instructions for each supported operating system can be found below.
 
