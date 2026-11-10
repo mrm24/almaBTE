@@ -37,6 +37,11 @@ target_link_libraries(symmetry_test alma_framework gtest gtest_main
   ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
   libsymspg Threads::Threads)
 
+add_executable(symmetry_character_test symmetry_character_test.cpp)
+target_link_libraries(symmetry_character_test alma_framework gtest gtest_main
+  ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
+  libsymspg Threads::Threads)
+
 add_executable(mpi_test mpi_test.cpp)
 target_link_libraries(mpi_test alma_framework gtest gtest_main
   ${MPI_CXX_LIBRARIES} ${Boost_LIBRARIES}
@@ -193,6 +198,7 @@ add_test(NAME mass_test COMMAND mass_test)
 add_test(NAME vc_test COMMAND vc_test)
 add_test(NAME dynamical_matrix_test COMMAND dynamical_matrix_test)
 add_test(NAME symmetry_test COMMAND symmetry_test)
+add_test(NAME symmetry_character_test COMMAND symmetry_character_test)
 add_test(NAME mpi_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 4 $<TARGET_FILE:symmetry_test>)
 add_test(NAME qpoint_grid_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 2 $<TARGET_FILE:qpoint_grid_test>)
 add_test(NAME cv_test COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} 2 $<TARGET_FILE:cv_test>)

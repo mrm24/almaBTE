@@ -242,6 +242,74 @@ public:
         return nruter;
     }
 
+    /// @return the Cartesian rotation matrix of an operation.
+    const Eigen::MatrixXd& get_crotation(std::size_t index) const {
+        if (index >= this->translations.size())
+            throw alma::value_error("invalid operation index");
+        return this->crotations[index];
+    }
+
+
+    /// @return the Cartesian fractional translation of an operation.
+    const Eigen::VectorXd& get_ctranslation(std::size_t index) const {
+        if (index >= this->translations.size())
+            throw alma::value_error("invalid operation index");
+        return this->ctranslations[index];
+    }
+
+
+    /// Find the operations that leave a q point invariant up to a
+    /// reciprocal lattice vector (the little group of q, without
+    /// time reversal).
+    ///
+    /// @param[in] structure - the crystal the operations belong to
+    /// @param[in] q - Cartesian q point
+    /// @return the indices of the operations in the little group
+    std::vector<std::size_t> get_little_group(
+        const Crystal_structure& structure,
+        const Eigen::Ref<const Eigen::Vector3d>& q) const;
+
+
+    /// Matrix representation of one operation on the space of
+    /// atomic displacements (3 * natoms components) at a given q point,
+    /// expressed in the same (step-like) phase convention used by the
+    /// dynamical matrix builder, i.e. the eigenvectors do not include the
+    /// atomic positions in the phase.
+    ///
+    /// The operation maps the point q to R q = q + G. The returned
+    /// unitary matrix S maps an eigenvector at q onto an eigenvector at
+    /// R q, which is equivalent to q. When the operation belongs to the
+    /// little group of q, S commutes with the dynamical matrix at q.
+    ///
+    /// @param[in] structure - the crystal the operations belong to
+    /// @param[in] index - the operation number
+    /// @param[in] q - Cartesian q point
+    /// @return the 3N x 3N representation matrix
+    Eigen::MatrixXcd get_representation(
+        const Crystal_structure& structure,
+        std::size_t index,
+        const Eigen::Ref<const Eigen::Vector3d>& q) const;
+
+
+    /// Character of one operation of the little group of q in a set of
+    /// degenerate eigenvectors, i.e. the trace of the representation
+    /// matrix restricted to that subspace.
+    ///
+    /// @param[in] structure - the crystal the operations belong to
+    /// @param[in] index - the operation number
+    /// @param[in] q - Cartesian q point
+    /// @param[in] vectors - 3N x d matrix whose columns span a
+    /// degenerate subspace at q
+    /// @return the character
+    std::complex<double> get_character(
+        const Crystal_structure& structure,
+        std::size_t index,
+        const Eigen::Ref<const Eigen::Vector3d>& q,
+        const Eigen::Ref<const Eigen::MatrixXcd>& vectors) const {
+        Eigen::MatrixXcd S = this->get_representation(structure, index, q);
+        return (vectors.adjoint() * S * vectors).trace();
+    }
+
     /// Take all pairs of atoms in the structure and divide them
     /// among equivalence classes defined by the internal
     /// translations.

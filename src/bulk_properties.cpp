@@ -107,7 +107,12 @@ Eigen::MatrixXd calc_kappa_coherence(const alma::Crystal_structure& poscar,
             if (alma::almost_equal(sp_representative.omega(im),0.)) continue;
             
             for (decltype(nmodes) imp = 0; imp < nmodes; ++imp) {
-                if (alma::almost_equal(sp_representative.omega(imp),0.) || im == imp) continue;
+                if (alma::almost_equal(sp_representative.omega(imp),0.)) continue;
+                // Pairs inside the same degenerate subspace (including im == imp)
+                // are not coherences between different frequencies. Excluding
+                // the whole subspace, instead of only the diagonal elements,
+                // makes the result independent of the basis chosen inside it.
+                if (alma::almost_equal(sp_representative.omega(im), sp_representative.omega(imp))) continue;
 
                 auto Gamma_summation = w(im,iq_representative) + w(imp, iq_representative);
                 auto omega_diff      = sp_representative.omega(imp) - sp_representative.omega(im);

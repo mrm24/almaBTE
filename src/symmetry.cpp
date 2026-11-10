@@ -122,6 +122,57 @@ Symmetry_operations::Symmetry_operations(const Crystal_structure& structure,
 }
 
 
+std::vector<std::size_t> Symmetry_operations::get_little_group(
+    const Crystal_structure& structure,
+    const Eigen::Ref<const Eigen::Vector3d>& q) const {
+    std::vector<std::size_t> nruter;
+
+    for (std::size_t iop = 0; iop < this->translations.size(); ++iop) {
+        // R q - q must be a reciprocal lattice vector. Its coordinates in
+        // the basis of the reciprocal lattice vectors must be integers.
+        Eigen::Vector3d dq = this->crotations[iop] * q - q;
+        Eigen::Vector3d coords = structure.rlattvec.colPivHouseholderQr().solve(dq);
+
+        if (almost_equal(0., (coords - coords.array().round().matrix()).squaredNorm()))
+            nruter.emplace_back(iop);
+    }
+    return nruter;
+}
+
+
+Eigen::MatrixXcd Symmetry_operations::get_representation(
+    const Crystal_structure& structure,
+    std::size_t index,
+    const Eigen::Ref<const Eigen::Vector3d>& q) const {
+    if (index >= this->translations.size())
+        throw alma::value_error("invalid operation index");
+
+    const auto natoms = static_cast<std::size_t>(structure.get_natoms());
+    const Eigen::Vector3d Rq = this->crotations[index] * q;
+
+    // In the smooth convention (positions included in the phase) an
+    // operation {R|f} acts on the eigenvectors as
+    //    e'_{R(k)} = exp(-i Rq.f) R e_k,
+    // independently of the lattice vector that brings the image of an
+    // atom back to the unit cell. Dynamical_matrix_builder works with the
+    // step-like convention, so the change of convention is done with the
+    // same diagonal phase matrices U(q) = exp(i q.tau) used there.
+    Eigen::MatrixXcd nruter = Eigen::MatrixXcd::Zero(3 * natoms, 3 * natoms);
+    const std::complex<double> global_phase = std::exp(
+        -constants::imud * Rq.dot(Eigen::Vector3d(this->ctranslations[index])));
+
+    for (std::size_t ia = 0; ia < natoms; ++ia) {
+        const std::size_t ib = this->symmetry_map[ia][index];
+        const Eigen::Vector3d tau_a = structure.lattvec * structure.positions.col(ia);
+        const Eigen::Vector3d tau_b = structure.lattvec * structure.positions.col(ib);
+        const std::complex<double> phase =
+            global_phase * std::exp(constants::imud * (Rq.dot(tau_b) - q.dot(tau_a)));
+        nruter.block(3 * ib, 3 * ia, 3, 3) = phase * this->crotations[index];
+    }
+    return nruter;
+}
+
+
 void Symmetry_operations::fill_map(const Crystal_structure& structure) {
     auto natoms = static_cast<std::size_t>(structure.get_natoms());
     auto nops = this->get_nsym();

@@ -337,6 +337,39 @@ public:
         return nruter;
     }
 
+    /// Impose the point group of a q point on a set of band-space
+    /// vector operators (e.g. the Wigner velocity matrices), using the
+    /// representation matrices of the little group of q. The traces of
+    /// those matrices restricted to each degenerate subspace are the
+    /// characters of the operations, see
+    /// Symmetry_operations::get_character().
+    ///
+    /// Unlike copy_symmetry(), which rotates a plain Cartesian vector,
+    /// the band indices of v_{ss'} also transform: for every operation R
+    /// in the little group of q the symmetrized object is
+    ///    v^a = 1/N sum_R sum_b R_{ab} D(R) v^b D(R)^dagger,
+    /// where D(R)_{st} = <s|S(R)|t> is the representation of R in the
+    /// eigenvector basis.
+    ///
+    /// All the axes of v and the eigenvectors in wfs must refer to one
+    /// and the same basis of every degenerate subspace.
+    ///
+    /// @param[in] iq - index of the q point
+    /// @param[in] structure - the crystal
+    /// @param[in] symms - set of symmetry operations of the crystal
+    /// @param[in] v - 3 x (ndof * ndof) array, with the (s, s') element of
+    /// the matrix of each Cartesian component stored at s + ndof * s'
+    /// (the layout of Spectrum_at_point::wigner_v)
+    /// @param[in] wfs - ndof x ndof matrix with the eigenvectors at q
+    /// in its columns
+    /// @return the symmetrized version of v, with the same layout
+    Eigen::ArrayXXcd copy_symmetry_with_character(
+        std::size_t iq,
+        const Crystal_structure& structure,
+        const Symmetry_operations& symms,
+        const Eigen::Ref<const Eigen::ArrayXXcd>& v,
+        const Eigen::Ref<const Eigen::MatrixXcd>& wfs) const;
+
 private:
     friend void save_bulk_hdf5(const char* filename,
                                const std::string& description,
@@ -377,10 +410,12 @@ private:
     /// position in an MPI communicator.
     /// @param[in] factory - object in charge of building the
     /// dynamical matrix at each point.
+    /// @param[in] structure - the crystal
     /// @param[in] symms - set of symmetry operations of the crystal
     /// @param[in] communicator - MPI communicator to use
     std::vector<Spectrum_at_point> compute_my_spectrum(
         const Dynamical_matrix_builder& factory,
+        const Crystal_structure& structure,
         const Symmetry_operations& symms,
         const boost::mpi::communicator& communicator);
 

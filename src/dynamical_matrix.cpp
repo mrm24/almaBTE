@@ -621,26 +621,38 @@ std::unique_ptr<Spectrum_at_point> Dynamical_matrix_builder::get_spectrum(
     }
     subspaces.emplace_back(subspace_init, omega.size() - 1);
 
-    /// Iterate over the degenerate subspaces and 
-    /// treat them in the appropiate way
+    /// Build one basis of eigenvectors, common to the three Cartesian axes,
+    /// for every degenerate subspace. The Wigner velocity of each axis must
+    /// be expressed in the same basis, otherwise tensor products of
+    /// different components and the action of the point group on them are
+    /// not defined. The basis is the same one finally stored in wfs.
+    Eigen::MatrixXcd wfs_common = wfs;
+    {
+        Eigen::MatrixXcd directional =
+            1. * matrices[1] + 2. * matrices[2] + 3. * matrices[3];
+        for (auto subspace : subspaces) {
+            auto dim = subspace.second - subspace.first + 1;
+            if (dim > 1 && !almost_equal(omega(subspace.first), 0.))
+                wfs_common.block(0, subspace.first, ndof, dim) =
+                    solve_degeneracy(directional,
+                                     wfs.block(0, subspace.first, ndof, dim))
+                        .eval();
+        }
+    }
+
+    /// Iterate over the degenerate subspaces.
     for (std::size_t axis = 0; axis < 3; ++axis) {
         for (auto subspace_left : subspaces) {
 
-            // Build left degenerate safe eigenvectors
             auto dim_left = subspace_left.second - subspace_left.first + 1;
-            Eigen::MatrixXcd vectors_left = (subspace_left.first == subspace_left.second) ?
-                                            wfs.block(0, subspace_left.first, ndof, dim_left) :
-                                            solve_degeneracy(matrices[axis + 1], wfs.block(0, subspace_left.first, ndof, dim_left));
+            Eigen::MatrixXcd vectors_left = wfs_common.block(0, subspace_left.first, ndof, dim_left);
             /// Obtain the left eignevectors in the smooth convention
             Eigen::MatrixXcd vectors_left_smooth = invU * vectors_left;
 
             for (auto subspace_right : subspaces){
 
                 auto dim_right = subspace_right.second - subspace_right.first + 1;
-                // Build right degenerate safe eigenvector
-                Eigen::MatrixXcd vectors_right = (subspace_right.first == subspace_right.second) ?
-                                            wfs.block(0, subspace_right.first, ndof, dim_right) :
-                                            solve_degeneracy(matrices[axis + 1], wfs.block(0, subspace_right.first, ndof, dim_right));
+                Eigen::MatrixXcd vectors_right = wfs_common.block(0, subspace_right.first, ndof, dim_right);
                 /// Obtain the right eignevectors in the smooth convention
                 Eigen::MatrixXcd vectors_right_smooth = invU * vectors_right;
 

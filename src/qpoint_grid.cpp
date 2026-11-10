@@ -58,7 +58,7 @@ Gamma_grid::Gamma_grid(const Crystal_structure& poscar,
     this->fill_map(symms);
     Dynamical_matrix_builder builder(poscar, symms, force_constants);
     boost::mpi::communicator world;
-    auto my_spectrum = this->compute_my_spectrum(builder, symms, world);
+    auto my_spectrum = this->compute_my_spectrum(builder, poscar, symms, world);
     std::vector<decltype(my_spectrum)> all_spectra;
     boost::mpi::all_gather(world, my_spectrum, all_spectra);
 
@@ -88,7 +88,7 @@ Gamma_grid::Gamma_grid(const Crystal_structure& poscar,
     this->fill_map(symms);
     Dynamical_matrix_builder builder(poscar, symms, force_constants, born, NAC_method);
     boost::mpi::communicator world;
-    auto my_spectrum = this->compute_my_spectrum(builder, symms, world);
+    auto my_spectrum = this->compute_my_spectrum(builder, poscar, symms, world);
     std::vector<decltype(my_spectrum)> all_spectra;
     boost::mpi::all_gather(world, my_spectrum, all_spectra);
 
@@ -117,6 +117,7 @@ void Gamma_grid::initialize_cpos() {
 
 std::vector<Spectrum_at_point> Gamma_grid::compute_my_spectrum(
     const Dynamical_matrix_builder& factory,
+    const Crystal_structure& structure,
     const Symmetry_operations& symms,
     const boost::mpi::communicator& communicator) {
     auto nprocs = communicator.size();
@@ -137,13 +138,76 @@ std::vector<Spectrum_at_point> Gamma_grid::compute_my_spectrum(
             this->copy_symmetry(
                     iq, symms, my_spectrum[iq - limits[0]].vg.matrix())
                 .array();
-        // The Wigner velocities are deliberately not symmetrized here: a
-        // plain Cartesian little-group average of v_ss' is only valid for
-        // non-degenerate diagonal elements. The point group is imposed on
-        // the final tensor in calc_kappa_coherence instead.
+        // The Wigner velocities are matrices in band space: besides the
+        // Cartesian index they transform through the representation of the
+        // little group in the eigenvector basis (the characters), so the
+        // plain Cartesian average used for vg does not apply.
+        auto& sp = my_spectrum[iq - limits[0]];
+        sp.wigner_v = this->copy_symmetry_with_character(
+            iq, structure, symms, sp.wigner_v, sp.wfs);
     }
 
     return my_spectrum;
+}
+
+
+Eigen::ArrayXXcd Gamma_grid::copy_symmetry_with_character(
+    std::size_t iq,
+    const Crystal_structure& structure,
+    const Symmetry_operations& symms,
+    const Eigen::Ref<const Eigen::ArrayXXcd>& v,
+    const Eigen::Ref<const Eigen::MatrixXcd>& wfs) const {
+    const std::size_t index = python_mod(iq, this->nqpoints);
+    const std::size_t nops = symms.get_nsym();
+    const Eigen::Vector3d q = this->cpos.col(index);
+    const Eigen::Index ndof = wfs.rows();
+
+    if (v.rows() != 3 || v.cols() != ndof * ndof || wfs.cols() != ndof)
+        throw value_error("inconsistent dimensions");
+
+    // Matrices of each Cartesian component, (s, s') at s + ndof * s'.
+    std::array<Eigen::MatrixXcd, 3> comps;
+
+    for (Eigen::Index a = 0; a < 3; ++a) {
+        comps[a].resize(ndof, ndof);
+
+        for (Eigen::Index sp = 0; sp < ndof; ++sp)
+            for (Eigen::Index s = 0; s < ndof; ++s)
+                comps[a](s, sp) = v(a, s + ndof * sp);
+    }
+
+    std::array<Eigen::MatrixXcd, 3> acc;
+
+    for (auto& m : acc)
+        m = Eigen::MatrixXcd::Zero(ndof, ndof);
+    std::size_t nfound = 0;
+
+    for (std::size_t iop = 0; iop < nops; ++iop) {
+        // Only the operations of the little group of q.
+        if (this->symmetry_map[index][2 * iop] != index)
+            continue;
+        const Eigen::MatrixXcd D =
+            wfs.adjoint() * symms.get_representation(structure, iop, q) * wfs;
+        const Eigen::MatrixXd& R = symms.get_crotation(iop);
+        std::array<Eigen::MatrixXcd, 3> rotated;
+
+        for (Eigen::Index b = 0; b < 3; ++b)
+            rotated[b] = D * comps[b] * D.adjoint();
+
+        for (Eigen::Index a = 0; a < 3; ++a)
+            for (Eigen::Index b = 0; b < 3; ++b)
+                acc[a] += R(a, b) * rotated[b];
+        ++nfound;
+    }
+
+    Eigen::ArrayXXcd nruter(3, ndof * ndof);
+
+    for (Eigen::Index a = 0; a < 3; ++a)
+        for (Eigen::Index sp = 0; sp < ndof; ++sp)
+            for (Eigen::Index s = 0; s < ndof; ++s)
+                nruter(a, s + ndof * sp) =
+                    acc[a](s, sp) / static_cast<double>(nfound);
+    return nruter;
 }
 
 
